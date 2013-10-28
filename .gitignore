@@ -1,6 +1,13 @@
-.eunit
-deps
+/apps/*/ebin/
+/apps/*/.eunit/
+/ebin/
+/.eunit/
+/deps/
+/doc/*
+!/doc/overview.edoc
 *.o
 *.beam
+*.app
 *.plt
+rebar
 erl_crash.dump
