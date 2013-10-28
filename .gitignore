@@ -4,7 +4,6 @@
 /.eunit/
 /deps/
 /doc/*
-!/doc/overview.edoc
 *.o
 *.beam
 *.app

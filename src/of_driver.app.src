@@ -1,0 +1,8 @@
+{application, of_driver,
+ [{description, "OF-Driver Library for Erlang"},
+  {vsn, "0.1"},
+  {applications, [kernel,
+                  stdlib]},
+  {env, []},
+  {mod, {of_driver_app, []}}
+ ]}.
