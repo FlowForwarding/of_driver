@@ -10,14 +10,34 @@
 
 -behaviour(gen_server).
 
--export([start_link/0]).
+-include_lib("of_protocol/include/of_protocol.hrl").
 
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-	 terminate/2, code_change/3]).
+-export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2,terminate/2, code_change/3]).
+
+-export([send/2,
+	 send_list/2,
+	 sync_send_list/2
+	]).
 
 -define(SERVER, ?MODULE). 
 
 -record(state, {}).
+
+%%------------------------------------------------------------------
+
+-spec send(Switch :: term(), Msg :: #ofp_message{}) -> ok | {error, Reason :: term()}.
+send(_Switch,#ofp_message{} = _Msg) ->
+    ok.
+
+-spec send_list(Switch :: term(), [Msg :: #ofp_message{}]) -> ok | {error, Reason :: term()}.
+send_list(_Switch, Msgs) when is_list(Msgs) ->
+    ok.
+
+-spec sync_send_list(Switch :: term(), [Msg :: #ofp_message{}]) -> ok | {error, Msgs :: list()}.
+sync_send_list(_Switch, Msgs) when is_list(Msgs) ->
+    ok.
+							     
+%%------------------------------------------------------------------
 
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
@@ -40,3 +60,4 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
