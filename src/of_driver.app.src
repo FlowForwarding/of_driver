@@ -2,7 +2,9 @@
  [{description, "OF-Driver Library for Erlang"},
   {vsn, "0.1"},
   {applications, [kernel,
-                  stdlib]},
+                  stdlib,
+		  of_protocol
+		 ]},
   {env, []},
   {mod, {of_driver_app, []}}
  ]}.

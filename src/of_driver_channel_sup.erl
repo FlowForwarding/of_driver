@@ -1,4 +1,4 @@
--module(of_driver_sup).
+-module(of_driver_channel_sup).
 
 -behaviour(supervisor).
 
@@ -13,7 +13,6 @@ start_link() ->
 
 init([]) ->
     RestartStrategy = one_for_one,
-    
     MaxRestarts = 1000,
     MaxSecondsBetweenRestarts = 3600,
 
@@ -23,17 +22,10 @@ init([]) ->
     Shutdown = 2000,
     Type = worker,
     
-    L = of_driver_listener,
-    LChild = {L, {L, start_link, []}, Restart, Shutdown, Type, [L]},
+    %% Start N amount channles.....
+    Ch=of_driver_channel,
+    ChChild = {Ch, {Ch, start_link, []}, Restart, Shutdown, Type, [Ch]},
     
-    Ch = of_driver_channel,
-    ChSup = {Ch, {Ch, start_link, []}, Restart, Shutdown, Type, [Ch]},
     
-    C = of_driver_connection,
-    CSup = {C, {C, start_link, []}, Restart, Shutdown, Type, [C]},
-    
-    {ok, {SupFlags, [ LChild,
-		      ChSup,
-		      CSup
-		    ]}
-    }.
+    {ok, {SupFlags, [ChChild]}}.
+
