@@ -2,9 +2,8 @@
 
 -behaviour(supervisor).
 
--export([start_link/0]).
-
--export([init/1]).
+-export([start_link/0, init/1]).
+-export([start_child/1]).
 
 -define(SERVER, ?MODULE).
 
@@ -15,15 +14,12 @@ init([]) ->
     RestartStrategy = one_for_one,
     MaxRestarts = 1000,
     MaxSecondsBetweenRestarts = 3600,
-
     SupFlags = {RestartStrategy, MaxRestarts, MaxSecondsBetweenRestarts},
-    
-    Restart = permanent,
-    Shutdown = 2000,
-    Type = worker,
-    
-    %% Start N amount connections.....
+    {ok,{SupFlags,[]}}.
+
+start_child(Socket) ->
     C=of_driver_connection,
-    CChild = {C, {C, start_link, []}, Restart, Shutdown, Type, [C]},
-    
-    {ok, {SupFlags, [CChild]}}.
+    Restart = temporary,
+    Shutdown = 200,
+    Type = worker,
+    supervisor:start_child(?MODULE,{C, {C, start, [Socket]}, Restart, Shutdown, Type, [C]}).

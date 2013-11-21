@@ -2,9 +2,8 @@
 
 -behaviour(supervisor).
 
--export([start_link/0]).
-
--export([init/1]).
+-export([start_link/0, init/1]).
+-export([create/0]).
 
 -define(SERVER, ?MODULE).
 
@@ -23,9 +22,11 @@ init([]) ->
     Type = worker,
     
     %% Start N amount channles.....
-    Ch=of_driver_channel,
-    ChChild = {Ch, {Ch, start_link, []}, Restart, Shutdown, Type, [Ch]},
-    
-    
-    {ok, {SupFlags, [ChChild]}}.
+    %% Ch=of_driver_channel,
+    %% ChChild = {Ch, {Ch, start_link, []}, Restart, Shutdown, Type, [Ch]},
+    %% {ok, {SupFlags, [ChChild]}}.
+    {ok,{SupFlags,[]}}.
+
+create() ->
+    ok.
 

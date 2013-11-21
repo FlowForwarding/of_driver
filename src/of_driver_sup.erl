@@ -26,14 +26,14 @@ init([]) ->
     L = of_driver_listener,
     LChild = {L, {L, start_link, []}, Restart, Shutdown, Type, [L]},
     
-    Ch = of_driver_channel,
+    Ch = of_driver_channel_sup,
     ChSup = {Ch, {Ch, start_link, []}, Restart, Shutdown, Type, [Ch]},
     
-    C = of_driver_connection,
+    C = of_driver_connection_sup,
     CSup = {C, {C, start_link, []}, Restart, Shutdown, Type, [C]},
     
-    {ok, {SupFlags, [ LChild,
-		      ChSup,
-		      CSup
+    {ok, {SupFlags, [ ChSup,
+		      CSup,
+                      LChild
 		    ]}
     }.
