@@ -23,14 +23,14 @@ init([]) ->
     Shutdown = 2000,
     Type = worker,
     
-    L = of_driver_listener,
-    LChild = {L, {L, start_link, []}, Restart, Shutdown, Type, [L]},
-    
     Ch = of_driver_channel_sup,
     ChSup = {Ch, {Ch, start_link, []}, Restart, Shutdown, Type, [Ch]},
     
     C = of_driver_connection_sup,
     CSup = {C, {C, start_link, []}, Restart, Shutdown, Type, [C]},
+    
+    L = of_driver_listener,
+    LChild = {L, {L, start_link, []}, Restart, Shutdown, Type, [L]},
     
     {ok, {SupFlags, [ ChSup,
 		      CSup,

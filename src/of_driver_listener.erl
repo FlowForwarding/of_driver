@@ -7,16 +7,16 @@
 %% API
 -export([connections/0]).
 
--export([accept/1]).
+-export([accept/2, conf_default/3]).
 
 -define(SERVER, ?MODULE). 
--define(START_VERSION,4).
 -define(STATE,of_driver_listener_state).
 
 -include_lib("of_protocol/include/of_protocol.hrl").
 -include_lib("of_protocol/include/ofp_v4.hrl").%% TODO, initial version per controller ? ...
 
--record(?STATE, { lsock      :: inets:socket()
+-record(?STATE, { lsock    :: inets:socket(),
+                  versions :: integer()
                 }).
 
 %% - API ---
@@ -27,26 +27,27 @@ connections() ->
 %% --------
 
 start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+    {ok,Pid} = gen_server:start_link({local, ?SERVER}, ?MODULE, [], []),
+    ok = gen_server:cast(?MODULE,startup),
+    {ok,Pid}.
 
 init(_) ->
-    process_flag(trap_exit,true),
-    Port=listen_port_conf(),
-    {ok, LSocket} = gen_tcp:listen(Port,[binary, {packet, raw},{active, once}, {reuseaddr, true}]),
-    {ok, #?STATE{lsock=LSocket}, 0}.
+    Port=conf_default(listen_port,fun erlang:is_integer/1,12345),
+    CompatibleVersions=conf_default(of_comaptible_versions,fun erlang:is_list/1,[3,4]),
+    {ok, LSocket} = gen_tcp:listen(Port,[binary, {packet, raw}, {active, false}, {reuseaddr, true}]),
+    {ok, #?STATE{lsock=LSocket,versions=CompatibleVersions}}.
 
 handle_call(Msg,_From,State) ->
     io:format("... [~p] Unknown handle_info ~p ...\n",[?MODULE,Msg]),
     {reply,ok,State}.
-    
+
+handle_cast(startup, #?STATE{lsock=LSocket,versions=Versions} = State) ->
+    spawn_link(?MODULE,accept,[LSocket,Versions]),
+    {noreply,State};
 handle_cast(Msg, State) ->
     io:format("... [~p] !!! Unknown handle_cast ~p !!!...\n",[?MODULE,Msg]),
     {noreply, State}.
 
-handle_info(timeout,#?STATE{lsock=LSocket} = State) ->
-    %% io:format("... [~p] handle_info create accept pid ...\n",[?MODULE]),
-    spawn(?MODULE,accept,[LSocket]),
-    {noreply,State};
 handle_info(Msg,State) ->
     io:format("... [~p] Unknown handle_info ~p ...\n",[?MODULE,Msg]),
     {noreply,State}.
@@ -58,28 +59,28 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 %%---------------------------------------------------------------------------------
 
-accept(ListenSocket) ->
-    io:format("... [~p] accept...\n",[?MODULE]),
+accept(ListenSocket,Versions) ->
     case gen_tcp:accept(ListenSocket) of
         {ok, Socket} ->
-            {ok,ConnCtrlPID} = of_driver_connection_sup:start_child(Socket),
-            io:format("... [~p] created child ~p ...\n",[?MODULE,ConnCtrlPID]),
+            {ok,ConnCtrlPID} = of_driver_connection_sup:start_child(Socket,Versions),
             ok = gen_tcp:controlling_process(Socket,ConnCtrlPID),
-            {ok,EncodedHelloMessage} = of_protocol:encode(of_driver_connection:hello(4)),
-            ok = gen_tcp:send(Socket, EncodedHelloMessage),
-            io:format("... [~p] Hello sent to switch ... ~p\n",[?MODULE,EncodedHelloMessage]),
-            accept(ListenSocket);
+            accept(ListenSocket,Versions);
         Error ->
             io:format("... [~p] Accept Error : ~p\n",[?MODULE,Error]),
-            accept(ListenSocket)
+            accept(ListenSocket,Versions)
     end.
 
 %%---------------------------------------------------------------------------------
 
-listen_port_conf() ->
-    case application:get_env(of_driver,listen_port) of
-	{ok,Port} when is_integer(Port) -> Port;
-	_                               -> 12345
+conf_default(Entry,Guard,Default) ->
+    case application:get_env(of_driver,Entry) of
+	{ok,Value} -> 
+            case Guard(Value) of
+                true -> Value;
+                false -> Default
+            end;
+	_ -> 
+            Default
     end.
 
 %% TODO: add logging....
