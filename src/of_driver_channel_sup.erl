@@ -21,10 +21,6 @@ init([]) ->
     Shutdown = 2000,
     Type = worker,
     
-    %% Start N amount channles.....
-    %% Ch=of_driver_channel,
-    %% ChChild = {Ch, {Ch, start_link, []}, Restart, Shutdown, Type, [Ch]},
-    %% {ok, {SupFlags, [ChChild]}}.
     {ok,{SupFlags,[]}}.
 
 create() ->

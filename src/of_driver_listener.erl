@@ -60,11 +60,21 @@ code_change(_OldVsn, State, _Extra) ->
 %%---------------------------------------------------------------------------------
 
 accept(ListenSocket,Versions) ->
+    io:format("... [~p] accept(ListenSocket,Versions) \n",[?MODULE]),
     case gen_tcp:accept(ListenSocket) of
         {ok, Socket} ->
-            {ok,ConnCtrlPID} = of_driver_connection_sup:start_child(Socket,Versions),
-            ok = gen_tcp:controlling_process(Socket,ConnCtrlPID),
-            accept(ListenSocket,Versions);
+            {ok, {Address, Port}}=inet:peername(Socket),
+            io:format("... [~p] peername: ~p ...\n ",[?MODULE,{Address, Port}]),
+            case of_driver_db:allowed(Address) of
+                true ->
+                    {ok,ConnCtrlPID} = of_driver_connection_sup:start_child(Socket,Versions),
+                    ok = gen_tcp:controlling_process(Socket,ConnCtrlPID),
+                    accept(ListenSocket,Versions);
+                false ->
+                    io:format("... [~p] Socket closed to unallowed switch : ~p\n",[?MODULE,Address]),
+                    gen_tcp:close(Socket),
+                    accept(ListenSocket,Versions)
+            end;
         Error ->
             io:format("... [~p] Accept Error : ~p\n",[?MODULE,Error]),
             accept(ListenSocket,Versions)

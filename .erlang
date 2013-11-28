@@ -1,3 +1,4 @@
+application:start(mnesia).
 application:start(syntax_tools).
 application:start(compiler).
 application:start(eenum).

@@ -12,6 +12,7 @@ start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 init([]) ->
+    %% RestartStrategy = simple_one_for_one,
     RestartStrategy = one_for_one,
     
     MaxRestarts = 1000,
@@ -30,7 +31,7 @@ init([]) ->
     CSup = {C, {C, start_link, []}, Restart, Shutdown, Type, [C]},
     
     L = of_driver_listener,
-    LChild = {L, {L, start_link, []}, Restart, Shutdown, Type, [L]},
+    LChild = {L, {L, start_link, []}, Restart, Shutdown, Type, [L]}, %%change child spec,
     
     {ok, {SupFlags, [ ChSup,
 		      CSup,

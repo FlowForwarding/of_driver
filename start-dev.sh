@@ -6,4 +6,4 @@
 #    -s of_driver_app 
 
 cd `dirname $0`
-exec erl -config $PWD/sys.config -pa $PWD/ebin $PWD/deps/*/ebin -boot start_sasl
+exec erl -sname of_driver -config $PWD/sys.config -pa $PWD/ebin $PWD/deps/*/ebin $PWD/tests -boot start_sasl -mnesia dir "'"$PWD"/Mnesia'"
