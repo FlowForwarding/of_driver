@@ -6,24 +6,17 @@
 
 %% API
 -export([connections/0]).
-
--export([accept/2, conf_default/3]).
+-export([accept/1]).
 
 -define(SERVER, ?MODULE). 
 -define(STATE,of_driver_listener_state).
 
--include_lib("of_protocol/include/of_protocol.hrl").
--include_lib("of_protocol/include/ofp_v4.hrl").%% TODO, initial version per controller ? ...
-
--record(?STATE, { lsock    :: inets:socket(),
-                  versions :: integer()
+-record(?STATE, { lsock :: inets:socket()
                 }).
 
 %% - API ---
-
 connections() ->
     gen_server:call(?MODULE,connections).
-
 %% --------
 
 start_link() ->
@@ -32,17 +25,16 @@ start_link() ->
     {ok,Pid}.
 
 init(_) ->
-    Port=conf_default(listen_port,fun erlang:is_integer/1,12345),
-    CompatibleVersions=conf_default(of_comaptible_versions,fun erlang:is_list/1,[3,4]),
+    Port=of_driver_utils:conf_default(listen_port,fun erlang:is_integer/1,6653),
     {ok, LSocket} = gen_tcp:listen(Port,[binary, {packet, raw}, {active, false}, {reuseaddr, true}]),
-    {ok, #?STATE{lsock=LSocket,versions=CompatibleVersions}}.
+    {ok, #?STATE{lsock=LSocket}}.
 
 handle_call(Msg,_From,State) ->
     io:format("... [~p] Unknown handle_info ~p ...\n",[?MODULE,Msg]),
     {reply,ok,State}.
 
-handle_cast(startup, #?STATE{lsock=LSocket,versions=Versions} = State) ->
-    spawn_link(?MODULE,accept,[LSocket,Versions]),
+handle_cast(startup, #?STATE{lsock=LSocket} = State) ->
+    spawn_link(?MODULE,accept,[LSocket]),
     {noreply,State};
 handle_cast(Msg, State) ->
     io:format("... [~p] !!! Unknown handle_cast ~p !!!...\n",[?MODULE,Msg]),
@@ -59,39 +51,29 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 %%---------------------------------------------------------------------------------
 
-accept(ListenSocket,Versions) ->
-    io:format("... [~p] accept(ListenSocket,Versions) \n",[?MODULE]),
+accept(ListenSocket) ->
+    io:format("... [~p] accept(ListenSocket) \n",[?MODULE]),
     case gen_tcp:accept(ListenSocket) of
         {ok, Socket} ->
             {ok, {Address, Port}}=inet:peername(Socket),
             io:format("... [~p] peername: ~p ...\n ",[?MODULE,{Address, Port}]),
             case of_driver_db:allowed(Address) of
                 true ->
-                    {ok,ConnCtrlPID} = of_driver_connection_sup:start_child(Socket,Versions),
+                    {ok,ConnCtrlPID} = of_driver_connection_sup:start_child(Socket),
                     ok = gen_tcp:controlling_process(Socket,ConnCtrlPID),
-                    accept(ListenSocket,Versions);
+                    accept(ListenSocket);
                 false ->
                     io:format("... [~p] Socket closed to unallowed switch : ~p\n",[?MODULE,Address]),
                     gen_tcp:close(Socket),
-                    accept(ListenSocket,Versions)
+                    accept(ListenSocket)
             end;
         Error ->
             io:format("... [~p] Accept Error : ~p\n",[?MODULE,Error]),
-            accept(ListenSocket,Versions)
+            accept(ListenSocket)
     end.
 
 %%---------------------------------------------------------------------------------
 
-conf_default(Entry,Guard,Default) ->
-    case application:get_env(of_driver,Entry) of
-	{ok,Value} -> 
-            case Guard(Value) of
-                true -> Value;
-                false -> Default
-            end;
-	_ -> 
-            Default
-    end.
 
 %% TODO: add logging....
 %% TODO, initial version per controller ? ...
