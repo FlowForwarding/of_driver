@@ -1,0 +1,1 @@
+-define(DATA_PATH_TBL,of_driver_channel_datapath).

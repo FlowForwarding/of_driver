@@ -3,12 +3,11 @@
 -behaviour(supervisor).
 
 -export([start_link/0, init/1]).
--export([start_child/1]).
-
--define(SERVER, ?MODULE).
+-export([start_child/1
+        ]).
 
 start_link() ->
-    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
     C=of_driver_channel,
@@ -21,5 +20,5 @@ init([]) ->
           ]}
     }.
 
-start_child(Socket) ->
-    supervisor:start_child(?MODULE,[Socket]).
+start_child(DatapathId) ->
+    supervisor:start_child(?MODULE,[DatapathId]).

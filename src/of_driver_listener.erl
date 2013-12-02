@@ -52,23 +52,23 @@ code_change(_OldVsn, State, _Extra) ->
 %%---------------------------------------------------------------------------------
 
 accept(ListenSocket) ->
-    io:format("... [~p] accept(ListenSocket) \n",[?MODULE]),
+    %% io:format("... [~p] accept(ListenSocket) \n",[?MODULE]),
     case gen_tcp:accept(ListenSocket) of
         {ok, Socket} ->
             {ok, {Address, Port}}=inet:peername(Socket),
-            io:format("... [~p] peername: ~p ...\n ",[?MODULE,{Address, Port}]),
+            %% io:format("... [~p] peername: ~p ...\n ",[?MODULE,{Address, Port}]),
             case of_driver_db:allowed(Address) of
                 true ->
                     {ok,ConnCtrlPID} = of_driver_connection_sup:start_child(Socket),
                     ok = gen_tcp:controlling_process(Socket,ConnCtrlPID),
                     accept(ListenSocket);
                 false ->
-                    io:format("... [~p] Socket closed to unallowed switch : ~p\n",[?MODULE,Address]),
+                    %% io:format("... [~p] Socket closed to unallowed switch : ~p\n",[?MODULE,Address]),
                     gen_tcp:close(Socket),
                     accept(ListenSocket)
             end;
         Error ->
-            io:format("... [~p] Accept Error : ~p\n",[?MODULE,Error]),
+            %% io:format("... [~p] Accept Error : ~p\n",[?MODULE,Error]),
             accept(ListenSocket)
     end.
 

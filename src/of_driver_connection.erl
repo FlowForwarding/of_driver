@@ -5,20 +5,21 @@
 -export([start_link/1, init/1, handle_call/3, handle_cast/2, handle_info/2,terminate/2, code_change/3]).
 -export([ping/0]).
 
--define(SERVER,?MODULE). 
 -define(STATE,of_driver_connection_state).
 
 -include_lib("of_protocol/include/of_protocol.hrl").
 
--record(?STATE,{socket        :: inet:socket(),
-                ctrl_versions :: list(),
-                version       :: integer(),
-                pid           :: pid(),
-                address       :: inet:ip_address(),
-                port          :: port(),
-                parser        :: #ofp_parser{},
+-record(?STATE,{socket              :: inet:socket(),
+                ctrl_versions       :: list(),
+                version             :: integer(),
+                pid                 :: pid(),
+                address             :: inet:ip_address(),
+                port                :: port(),
+                parser              :: #ofp_parser{},
                 hello_buffer = <<>> :: binary(),
-                protocol      :: tcp | ssl
+                protocol            :: tcp | ssl,
+                conn_role = main    :: main | aux,
+                aux_id              :: integer()
                }).
 
 %%------------------------------------------------------------------
@@ -29,11 +30,11 @@ start_link(Socket) ->
 init([Socket]) ->
     Protocol=tcp,
     of_driver_utils:setopts(Protocol,Socket,[{active, once}]),
-    Versions=of_driver_utils:conf_default(of_comaptible_versions,fun erlang:is_list/1,[3,4]),
     {ok, #?STATE{socket        = Socket,
-                 ctrl_versions = Versions,
+                 ctrl_versions = of_driver_utils:conf_default(of_comaptible_versions,fun erlang:is_list/1,[3,4]),
                  %% TODO: Complete SSL
-                 protocol      = Protocol
+                 protocol      = Protocol,
+                 aux_id        = 0
                 }}.
 
 handle_call(_Request, _From,State) ->
@@ -55,10 +56,14 @@ handle_info({tcp, Socket, Data},#?STATE{ parser = undefined,
                 {failed, Reason} ->
                     handle_failed_negotiation(Xid, Reason, State);
                 Version ->
+                    io:format("... [~p] Using version ~p ...",[?MODULE,Version]),
                     %% store connected somewhere
                     %% and do something with left overs....
                     {ok, Parser} = ofp_parser:new(Version),
-                    do_send_hello(Version,Socket),
+                    {ok, HelloBin} = of_protocol:encode(of_driver_utils:create_hello(Versions)),
+                    ok = of_driver_utils:send(tcp, Socket, HelloBin),                    
+                    {ok, FeaturesBin} = of_protocol:encode(of_driver_utils:create_features_request(Version)),
+                    ok = of_driver_utils:send(tcp, Socket, FeaturesBin),
                     {noreply, State#?STATE{parser = Parser,version = Version}}
             end;
         {error, binary_too_small} ->
@@ -75,15 +80,12 @@ handle_info({tcp, Socket, Data},#?STATE{ parser = Parser,
                                          protocol = Protocol,
                                          socket = Socket
                                        } = State) ->
-    of_driver_utils:setopts(Protocol,Socket,[{active, once}]),    
+    io:format("... [~p] OFS Handler needs to handle messages .... \n",[?MODULE]),
+    of_driver_utils:setopts(Protocol,Socket,[{active, once}]),
     case ofp_parser:parse(Parser, Data) of
         {ok, NewParser, Messages} ->
-            Handle = fun(Message, Acc) ->
-                             io:format("... [~p] OFS Handler needs to handle messages .... \n")
-                             %% handle_message(Message, Acc)
-                     end,
-            NewState = lists:foldl(Handle, State, Messages),
-            {noreply, NewState#?STATE{parser = NewParser}};
+            _NewState = lists:foldl(fun(Message, AccState) -> handle_message(Message, AccState) end, State, Messages),
+            {noreply, State#?STATE{parser = NewParser}};
         _Else ->
             terminate_connection(State, {bad_data, Data})
     end;
@@ -103,26 +105,27 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %%---------------------------------------------------------------------------------
-do_send_hello(Versions,Socket) ->
-    do_send_hello(Versions,normal,Socket).
 
-do_send_hello(Versions,Scenario,Socket) ->
-    {ok, HelloBin} = of_protocol:encode(of_driver_utils:create_hello(Versions)),
-    ok = of_driver_utils:send(tcp, Socket, HelloBin).
-
-encoded_hello_message(Scenario,Version) ->
-    {ok, EncodedHello} = of_protocol:encode(of_driver_utils:create_hello(Version)),
-    case Scenario of
-        hello_with_bad_version -> of_driver_utils:create_unsupported_hello();
-        _                      -> EncodedHello
-    end.
-
-get_hello_message([]) ->
-    [];
-get_hello_message([#ofp_message{ type = hello }=H|T]) ->
-    H;
-get_hello_message([H|T]) ->    
-    get_hello_message(T).
+handle_message(#ofp_message{ version = Version, type = features_reply, body = Body } = Msg,
+               #?STATE{ socket = Socket, aux_id = AuxID } = State) ->
+    io:format("... [~p] handling Message ~p ... \n",[?MODULE,Body]),
+    DataPathID=of_driver_utils:get_datapath_id(Version,Body),
+    case ets:lookup(of_driver_channel_datapath,DataPathID) of
+        [] when AuxID =:= 0 ->
+            {ok,ChannelPID} = of_driver_channel_sup:start_child(DataPathID),
+            of_driver_db:insert_datapath_id(ChannelPID,DataPathID),
+            io:format("... [~p] Created channel ~p ... \n",[?MODULE,ChannelPID]),
+            State;
+        [Entry] when AuxID =/= 0 ->
+            
+            State;
+        _Else ->
+            of_driver_utils:close(Socket),
+            erlang:exit(self(),kill) %% Todo; review exit/close strategy...
+    end;
+handle_message(#ofp_message{ version = Version, type = _Type, body = Body } = Msg,State) ->
+    io:format("... [~p] handling Message ~p (Not doing anything...) ... \n",[?MODULE,Body]),
+    State.
 
 decide_on_version(SupportedVersions, #ofp_message{version = CtrlHighestVersion,
                                                   body = HelloBody}) ->
@@ -177,6 +180,7 @@ greatest_common_version(ControllerVersions, SwitchVersions) ->
 
 handle_failed_negotiation(Xid, Reason, #?STATE{socket = Socket,
                                                ctrl_versions = Versions} = State) ->
+    io:format("... [~p] Version negotiation failed Reason :~p...",[?MODULE,Reason]),
     send_incompatible_version_error(Xid, Socket, tcp,
                                     lists:max(Versions)),
     terminate_connection(State, Reason).
@@ -196,7 +200,6 @@ create_error(4, Type, Code) ->
 
 terminate_connection(#?STATE{socket = Socket} = State, Reason) ->
     of_driver_utils:close(tcp, Socket).
-
 
 ping() ->
     ok.

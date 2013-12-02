@@ -4,12 +4,23 @@
 
 -export([send/3,
          setopts/3,
-         close/2
+         close/2,
+         connect/3,
+         opts/1
         ]).
 -export([conf_default/3,
          create_hello/1,
-         create_unsupported_hello/1
+         create_unsupported_hello/1,
+         create_features_request/1,
+         get_datapath_id/2
         ]).
+
+mod(3) ->
+    {ok,of_driver_v3};
+mod(4) ->
+    {ok,of_driver_v4};
+mod(_) ->
+    {error,bad_version}.
 
 conf_default(Entry,Guard,Default) ->
     case application:get_env(of_driver,Entry) of
@@ -38,6 +49,18 @@ create_unsupported_hello(Version) ->
     {ok, EncodedHello} = of_protocol:encode(create_hello(Version)),
     <<_:8, Rest/binary>> = EncodedHello,
     <<(16#5):8, Rest/binary>>.
+
+create_features_request(Version) ->
+    case mod(Version) of
+        {ok,M} -> M:features_request();
+        Error  -> Error
+    end.
+
+get_datapath_id(Version,OfpFeaturesReply) ->
+    case mod(Version) of
+        {ok,M} -> M:datapath_id(OfpFeaturesReply);
+        Error  -> Error
+    end.
 
 %%------------------------------------------------------------------------------------
 
@@ -79,9 +102,4 @@ close(tcp, Socket) ->
 close(tls, Socket) ->
     ssl:close(Socket).
 
--spec generate_aux_resource_id(string(), integer()) -> string().
-generate_aux_resource_id(MainResourceId, AuxId) ->
-    MainResourceId ++ "_aux" ++ AuxId.
-
-max_generation_id() ->
-    16#FFFFFFFFFFFFFFFF.
+%%------------------------------------------------------------------------------------

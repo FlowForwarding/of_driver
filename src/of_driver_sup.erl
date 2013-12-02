@@ -3,15 +3,20 @@
 -behaviour(supervisor).
 
 -export([start_link/0]).
-
 -export([init/1]).
 
--define(SERVER, ?MODULE).
-
 start_link() ->
-    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
+    
+    case ets:info(of_driver_channel_datapath) of
+        undefined ->
+            of_driver_channel_datapath = ets:new(of_driver_channel_datapath,[ordered_set,public,named_table]);
+        Options ->
+            ok
+    end,
+    
     RestartStrategy = one_for_one,
     
     MaxRestarts = 1000,
