@@ -19,7 +19,8 @@
                 hello_buffer = <<>> :: binary(),
                 protocol            :: tcp | ssl,
                 conn_role = main    :: main | aux,
-                aux_id              :: integer()
+                aux_id              :: integer(),
+		datapath_id         :: integer()
                }).
 
 %%------------------------------------------------------------------
@@ -56,7 +57,7 @@ handle_info({tcp, Socket, Data},#?STATE{ parser = undefined,
                 {failed, Reason} ->
                     handle_failed_negotiation(Xid, Reason, State);
                 Version ->
-                    io:format("... [~p] Using version ~p ...",[?MODULE,Version]),
+                    %% io:format("... [~p] Using version ~p ...\n",[?MODULE,Version]),
                     %% store connected somewhere
                     %% and do something with left overs....
                     {ok, Parser} = ofp_parser:new(Version),
@@ -80,7 +81,7 @@ handle_info({tcp, Socket, Data},#?STATE{ parser = Parser,
                                          protocol = Protocol,
                                          socket = Socket
                                        } = State) ->
-    io:format("... [~p] OFS Handler needs to handle messages .... \n",[?MODULE]),
+    %% io:format("... [~p] OFS Handler needs to handle messages .... \n",[?MODULE]),
     of_driver_utils:setopts(Protocol,Socket,[{active, once}]),
     case ofp_parser:parse(Parser, Data) of
         {ok, NewParser, Messages} ->
@@ -95,7 +96,7 @@ handle_info({tcp_closed, Socket},State) ->
     {noreply,State};
 
 handle_info({tcp_error, Socket, Reason},State) ->
-    io:format("...!!! Error on socket ~p reason: ~p~n", [Socket, Reason]),
+    %% io:format("...!!! Error on socket ~p reason: ~p~n", [Socket, Reason]),
     {noreply,State}.
 
 terminate(_Reason, _State) ->
@@ -107,24 +108,35 @@ code_change(_OldVsn, State, _Extra) ->
 %%---------------------------------------------------------------------------------
 
 handle_message(#ofp_message{ version = Version, type = features_reply, body = Body } = Msg,
-               #?STATE{ socket = Socket, aux_id = AuxID } = State) ->
-    io:format("... [~p] handling Message ~p ... \n",[?MODULE,Body]),
+               #?STATE{ socket = Socket } = State)  when Version =:= 3  ->
     DataPathID=of_driver_utils:get_datapath_id(Version,Body),
-    case ets:lookup(of_driver_channel_datapath,DataPathID) of
+    %% io:format("... [~p] handling Message ~p\n___DataPathID:~p ... \n\n",[?MODULE,Body,DataPathID]),
+    State#?STATE{ datapath_id = DataPathID };
+
+handle_message(#ofp_message{ version = Version, type = features_reply, body = Body } = Msg,
+               #?STATE{ socket = Socket } = State) ->
+    DataPathID=of_driver_utils:get_datapath_id(Version,Body),
+    AuxID=of_driver_utils:get_aux_id(Version,Body),
+    %% io:format("... [~p] handling Message ~p\n___AUX ID: ~p\n___DataPathID:~p ... \n\n",[?MODULE,Body,AuxID,DataPathID]),
+    case of_driver_db:lookup_datapath_id(DataPathID) of
         [] when AuxID =:= 0 ->
             {ok,ChannelPID} = of_driver_channel_sup:start_child(DataPathID),
-            of_driver_db:insert_datapath_id(ChannelPID,DataPathID),
-            io:format("... [~p] Created channel ~p ... \n",[?MODULE,ChannelPID]),
-            State;
+	    io:format("... [~p] Created channel ~p ... \n",[?MODULE,ChannelPID]),
+            of_driver_db:insert_datapath_id(DataPathID,self(),ChannelPID),            
+            State#?STATE{ datapath_id = DataPathID };
         [Entry] when AuxID =/= 0 ->
-            
-            State;
-        _Else ->
-            of_driver_utils:close(Socket),
-            erlang:exit(self(),kill) %% Todo; review exit/close strategy...
+            %% add aux entry...
+	    io:format("... [~p] Adding Aux entry ...\n",[?MODULE]),
+	    of_driver_db:add_aux_id(Entry,DataPathID,[AuxID,self()]),
+	    State;
+        Else ->
+	    io:format("... [~p] Jip, else just happened\n...Else:~p... \n",[?MODULE,Else]),
+	    of_driver_utils:close(tcp,Socket),
+            %% erlang:exit(self(),kill) %% Todo; review exit/close strategy...
+	    State
     end;
 handle_message(#ofp_message{ version = Version, type = _Type, body = Body } = Msg,State) ->
-    io:format("... [~p] handling Message ~p (Not doing anything...) ... \n",[?MODULE,Body]),
+    %% io:format("... [~p] handling Message ~p (Not doing anything...) ... \n",[?MODULE,Body]),
     State.
 
 decide_on_version(SupportedVersions, #ofp_message{version = CtrlHighestVersion,
@@ -180,7 +192,7 @@ greatest_common_version(ControllerVersions, SwitchVersions) ->
 
 handle_failed_negotiation(Xid, Reason, #?STATE{socket = Socket,
                                                ctrl_versions = Versions} = State) ->
-    io:format("... [~p] Version negotiation failed Reason :~p...",[?MODULE,Reason]),
+    %% io:format("... [~p] Version negotiation failed Reason :~p...",[?MODULE,Reason]),
     send_incompatible_version_error(Xid, Socket, tcp,
                                     lists:max(Versions)),
     terminate_connection(State, Reason).

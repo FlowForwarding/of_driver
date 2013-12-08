@@ -12,7 +12,8 @@
          create_hello/1,
          create_unsupported_hello/1,
          create_features_request/1,
-         get_datapath_id/2
+         get_datapath_id/2,
+	 get_aux_id/2
         ]).
 
 mod(3) ->
@@ -51,15 +52,18 @@ create_unsupported_hello(Version) ->
     <<(16#5):8, Rest/binary>>.
 
 create_features_request(Version) ->
-    case mod(Version) of
-        {ok,M} -> M:features_request();
-        Error  -> Error
-    end.
+    version_and_run(Version,features_request,[]).
 
 get_datapath_id(Version,OfpFeaturesReply) ->
+    version_and_run(Version,datapath_id,[OfpFeaturesReply]).
+
+get_aux_id(Version,OfpFeaturesReply) -> %% NOTE: v3 has no auxiliary_id
+    version_and_run(Version,get_aux_id,[OfpFeaturesReply]).
+
+version_and_run(Version,Function,Args) ->
     case mod(Version) of
-        {ok,M} -> M:datapath_id(OfpFeaturesReply);
-        Error  -> Error
+	{ok,M} -> apply(M,Function,Args);
+	Error  -> Error
     end.
 
 %%------------------------------------------------------------------------------------

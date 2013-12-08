@@ -8,15 +8,7 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-init([]) ->
-    
-    case ets:info(of_driver_channel_datapath) of
-        undefined ->
-            of_driver_channel_datapath = ets:new(of_driver_channel_datapath,[ordered_set,public,named_table]);
-        Options ->
-            ok
-    end,
-    
+init([]) ->    
     RestartStrategy = one_for_one,
     
     MaxRestarts = 1000,

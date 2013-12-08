@@ -21,8 +21,19 @@ create_table() ->
     write(any,white).
 
 create_table(NodeList) ->
-    {atomic,ok} = mnesia:create_table(?WHITE,[{type,set},{disc_copies,NodeList},{attributes, record_info(fields, ?WHITE)}]),                  
-    {atomic,ok} = mnesia:create_table(?BLACK,[{type,set},{disc_copies,NodeList},{attributes, record_info(fields, ?BLACK)}]).
+    table_exists(?WHITE,NodeList),
+    table_exists(?BLACK,NodeList).
+
+table_exists(Tbl,NodeList) ->
+    try
+	_Props = mnesia:table_info(Tbl,all),
+	ok
+    catch
+	exit:{aborted,{no_exists,?WHITE,all}} ->
+	    {atomic,ok} = mnesia:create_table(?WHITE,[{type,set},{disc_copies,NodeList},{attributes, record_info(fields, ?WHITE)}]);
+	exit:{aborted,{no_exists,?BLACK,all}} ->
+	    {atomic,ok} = mnesia:create_table(?BLACK,[{type,set},{disc_copies,NodeList},{attributes, record_info(fields, ?BLACK)}])
+    end.
 
 write(Address,Tbl) when is_list(Address) ->
     case string:tokens(Address,".:") of
