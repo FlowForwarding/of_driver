@@ -1,6 +1,7 @@
 -module(of_driver_acl_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("of_driver/include/of_driver_acl.hrl").
 
 of_driver_acl_test_() ->
     {setup,
@@ -9,21 +10,6 @@ of_driver_acl_test_() ->
              mnesia:delete_schema([node()]),
              mnesia:create_schema([node()]),
              application:start(mnesia),
-             
-             try
-                 mnesia:table_info(of_driver_acl_white,all),
-                 {atomic,ok}=mnesia:delete_table(of_driver_acl_white)
-             catch
-                 _C:_E ->
-                     ok
-             end,
-             try
-                 mnesia:table_info(of_driver_acl_black,all),
-                 {atomic,ok}=mnesia:delete_table(of_driver_acl_black)
-             catch
-                 _C1:_E2 ->
-                     ok
-             end,
              of_driver_acl:create_table([node()])
      end,
      fun(_) -> 
@@ -39,107 +25,94 @@ of_driver_acl_test_() ->
 
 write() ->
     delete_entries(),
-    ok = of_driver_acl:write(any,white),
-    ok = of_driver_acl:write(any,black),
+    ok = of_driver_acl:write(any,'switch_handler',[]),
     
-    ?assertEqual([{of_driver_acl_white,any,undefined}],
-                 mnesia:dirty_read(of_driver_acl_white,any)),
-    ?assertEqual([{of_driver_acl_black,any,undefined}],
-                 mnesia:dirty_read(of_driver_acl_black,any)),
+    ?assertEqual([{?ACL_TBL,any,switch_handler,[]}], 
+                 mnesia:dirty_read(any)),
     
-    ok = of_driver_acl:write({0,0,0,0},white),
-    ok = of_driver_acl:write({10,10,10,10},black),
-    ok = of_driver_acl:write("123.123.123.123",white),
-    ok = of_driver_acl:write("33.33.33.33",black),
+    ok = of_driver_acl:write({0,0,0,0},'switch_handler',[]),
+    ok = of_driver_acl:write("123.123.123.123",'switch_handler',[]),
     
-    ?assertEqual([{of_driver_acl_white,{0,0,0,0},undefined}],
-                 mnesia:dirty_read(of_driver_acl_white,{0,0,0,0})),
-    ?assertEqual([{of_driver_acl_black,{10,10,10,10},undefined}],
-                 mnesia:dirty_read(of_driver_acl_black,{10,10,10,10})),
+    ?assertEqual([{?ACL_TBL,{0,0,0,0},switch_handler,[]}],
+                 mnesia:dirty_read(?ACL_TBL,{0,0,0,0})),
     
-    ?assertEqual([{of_driver_acl_white,{123,123,123,123},undefined}],
-                 mnesia:dirty_read(of_driver_acl_white,{123,123,123,123})
-                ),
-    ?assertEqual([{of_driver_acl_black,{33,33,33,33},undefined}],
-                 mnesia:dirty_read(of_driver_acl_black,{33,33,33,33})).
+    ?assertEqual([{?ACL_TBL,{123,123,123,123},switch_handler,[]}],
+                 mnesia:dirty_read(?ACL_TBL,{123,123,123,123})
+                ).
 
 read_any() ->
     delete_entries(),
-    ok = of_driver_acl:write(any,white),
-    ok = of_driver_acl:write(any,black),
+    ok = of_driver_acl:write(any,'switch_handler',[]),
     
-    ?assertEqual(true,of_driver_acl:read({0,0,0,0},white)),
-    ?assertEqual(true,of_driver_acl:read({0,0,0,0},black)).
+    ?assertEqual(true,
+                 of_driver_acl:read({0,0,0,0})),
+    ?assertEqual(true,
+                 of_driver_acl:read({10,20,30,40})),
+    ?assertEqual(true,
+                 of_driver_acl:read({110,110,110,110})).
+    
 
 read_specific() ->
     delete_entries(),
-    ok = of_driver_acl:write({10,10,10,10},white),
-    ok = of_driver_acl:write({1,1,1,1},black),
     
-    ?assertEqual(true,of_driver_acl:read({10,10,10,10},white)),
-    ?assertEqual(true,of_driver_acl:read({1,1,1,1},black)),
+    ok = of_driver_acl:write({10,10,10,10},'switch_handler',[]),
     
-    ?assertEqual(false,of_driver_acl:read({102,103,104,105},white)),
-    ?assertEqual(false,of_driver_acl:read({12,13,14,15},black)).
+    ?assertEqual(true,
+                 of_driver_acl:read({10,10,10,10})),
+    ?assertEqual(false,
+                 of_driver_acl:read({102,103,104,105})).
 
 add_any() ->
     delete_entries(),
-    ok = of_driver_acl:write({10,10,10,10},white),
-    ok = of_driver_acl:write({1,1,1,1},black),
+    ok = of_driver_acl:write({10,10,10,10},'switch_handler',[]),
     
-    ?assertEqual(true,of_driver_acl:read({10,10,10,10},white)),
-    ?assertEqual(true,of_driver_acl:read({1,1,1,1},black)),
+    ?assertEqual(true,
+                 of_driver_acl:read({10,10,10,10})),
     
-    ok = of_driver_acl:write(any,white),
-    ok = of_driver_acl:write(any,black),
+    ok = of_driver_acl:write(any,'switch_handler',[]),
     
-    ?assertEqual([any],mnesia:dirty_all_keys(of_driver_acl_white)),
-    ?assertEqual([any],mnesia:dirty_all_keys(of_driver_acl_black)).
+    ?assertEqual([any],
+                 mnesia:dirty_all_keys(?ACL_TBL)),
+    
+    ?assertEqual(true,
+                 of_driver_acl:read({10,10,10,10})).
     
 add_specific() ->
     delete_entries(),
     
-    ok = of_driver_acl:write(any,white),
-    ok = of_driver_acl:write(any,black),
-    
-    ?assertEqual([any],mnesia:dirty_all_keys(of_driver_acl_white)),
-    ?assertEqual([any],mnesia:dirty_all_keys(of_driver_acl_black)),
-    
+    ok = of_driver_acl:write(any,'switch_handler',[]),    
+    ?assertEqual([any],
+                 mnesia:dirty_all_keys(?ACL_TBL)),
 
-    ok = of_driver_acl:write({10,10,10,10},white),
-    ok = of_driver_acl:write({1,1,1,1},black),
+    ok = of_driver_acl:write({10,10,10,10},'switch_handler',[]),
     
-    ok = of_driver_acl:write("123.123.123.123",white),
-    ok = of_driver_acl:write("33.33.33.33",black),
+    ok = of_driver_acl:write("123.123.123.123",'switch_handler',[]),
     
-    ?assertEqual([{of_driver_acl_white,{10,10,10,10},undefined}],mnesia:dirty_read(of_driver_acl_white,{10,10,10,10})),
-    ?assertEqual([{of_driver_acl_black,{1,1,1,1},undefined}],mnesia:dirty_read(of_driver_acl_black,{1,1,1,1})),
-    ?assertEqual([{of_driver_acl_white,{123,123,123,123},undefined}],mnesia:dirty_read(of_driver_acl_white,{123,123,123,123})),
-    ?assertEqual([{of_driver_acl_black,{33,33,33,33},undefined}],mnesia:dirty_read(of_driver_acl_black,{33,33,33,33})).
+    ?assertEqual([{?ACL_TBL,{10,10,10,10},switch_handler,[]}],
+                 mnesia:dirty_read({10,10,10,10})),
+    ?assertEqual([{?ACL_TBL,{123,123,123,123},switch_handler,[]}],
+                 mnesia:dirty_read({123,123,123,123})),
+
+    ?assertEqual(true,
+                 of_driver_acl:read({10,10,10,10})),
+    ?assertEqual(true,
+                 of_driver_acl:read({123,123,123,123})).
     
 allowed() ->
     delete_entries(),
     ?assertEqual(false,of_driver_db:allowed({0,0,0,0})),
     
     delete_entries(),
-    ok = of_driver_acl:write(any,white),
+    ok = of_driver_acl:write(any,'switch_handler',[]),
     ?assertEqual(true,of_driver_db:allowed({0,0,0,0})),
-    ok = of_driver_acl:write(any,black),
-    ?assertEqual(false,of_driver_db:allowed({0,0,0,0})),
     
     delete_entries(),
-    ok = of_driver_acl:write({10,10,10,10},white),
+    ok = of_driver_acl:write({10,10,10,10},'switch_handler',[]),
     ?assertEqual(false,of_driver_db:allowed({0,0,0,0})),
-    ?assertEqual(true,of_driver_db:allowed({10,10,10,10})),
-    
-    ok = of_driver_acl:write({1,1,1,1},black),
-    ?assertEqual(false,of_driver_db:allowed({1,1,1,1})),
-    
-    ok = of_driver_acl:write({10,10,10,10},black),
-    ?assertEqual(false,of_driver_db:allowed({10,10,10,10})).
+    ?assertEqual(true,of_driver_db:allowed({10,10,10,10})).
 
-    delete_entries() ->
+delete_entries() ->
     [ begin 
           [ mnesia:dirty_delete(Tbl,Key) || Key <- mnesia:dirty_all_keys(Tbl) ]
-      end || Tbl <- [of_driver_acl_white,of_driver_acl_black] 
+      end || Tbl <- [?ACL_TBL]
     ].

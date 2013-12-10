@@ -15,7 +15,7 @@
 start_link(DatapathId) ->
     gen_server:start_link(?MODULE, [DatapathId], []).
 
-init([DatapathId]) ->
+init([_DatapathId]) ->
     {ok, #?STATE{ }}.
 
 handle_call(_Request, _From, State) ->

@@ -1,13 +1,28 @@
 -module(of_driver_db).
 
+-include_lib("of_driver/include/of_driver.hrl").
+-include_lib("of_driver/include/of_driver_acl.hrl").
+
 %% DB API to seperate DB infrastructure from LOOM.
 
--export([install/0,
-	 allowed/1,
-         insert_datapath_id/3,
-         lookup_datapath_id/1,
-	 add_aux_id/3
+-export([ install/0
         ]).
+
+-export([ clear_acl_list/0,
+          allowed/1,
+          grant_ipaddr/3,
+          revoke_ipaddr/1,
+          get_allowed_ipaddrs/0
+        ]).
+
+-export([ insert_datapath_id/3,
+          remove_datapath_id/1,
+          lookup_datapath_id/1,
+          add_aux_id/3
+        ]).
+
+
+%%--- Provisioning -----------------------------------------------------------------------------------------------
 
 install() ->
     try
@@ -26,30 +41,48 @@ install_try() ->
     ok = of_driver_acl:create_table([node()]),
     
     ok = mnesia:wait_for_tables([of_driver_acl_white,of_driver_acl_black],infinity),
-    case ets:info(of_driver_channel_datapath) of
+    case ets:info(?DATAPATH_TBL) of
         undefined ->
-            of_driver_channel_datapath = ets:new(of_driver_channel_datapath,[ordered_set,public,named_table]),
+            ?DATAPATH_TBL = ets:new(?DATAPATH_TBL,[ordered_set,public,named_table]),
 	    ok;
-        Options ->
+        _Options ->
             ok
     end.
 
+%%--- IP white/black list  ------------------------------------------------------------------------------------------------
+
+clear_acl_list() ->
+    of_driver_acl:clear().
+
+-spec allowed(Address :: inet:ip_address()) -> boolean().
 allowed(Address) ->
-    case of_driver_acl:read(Address,white) of
-        true  -> 
-            case of_driver_acl:read(Address,black) of
-                false -> true; %% Case no black record, Good!
-                true -> false  %% Case black record, Bad!
-            end;
-        false -> false
-    end.
+    of_driver_acl:read(Address).
 
-insert_datapath_id(DataPathID,ChannelPID,ConnPID) ->
-    ets:insert_new(of_driver_channel_datapath,{DataPathID,ChannelPID,ConnPID,AuxConnections=[]}).
-    
-add_aux_id(Entry,DataPathID,[AuxID,ConnPID]) ->
+-spec grant_ipaddr(IpAddr        :: inet:ip_address(), 
+                   SwitchHandler :: term(),
+                   Opts          :: list()) -> ok | {error, einval}.
+grant_ipaddr(IpAddr,SwitchHandler,Opts) ->
+    of_driver_acl:write(IpAddr,SwitchHandler,Opts).
+
+-spec revoke_ipaddr(IpAddr :: inet:ip_address()) -> ok | {error, einval}.
+revoke_ipaddr(IpAddr) ->
+    of_driver_acl:delete(IpAddr).
+
+-spec get_allowed_ipaddrs() -> [] | [ allowance() ].
+get_allowed_ipaddrs() ->
+    of_driver_acl:all().
+
+%%--- Datapath ID/Mac ------------------------------------------------------------------------------------------------
+
+insert_datapath_id({DatapathID,DatapathMac},ChannelPID,ConnPID) ->
+    true=ets:insert_new(?DATAPATH_TBL,{{DatapathID,DatapathMac},ChannelPID,ConnPID,_AuxConnections=[]}).
+
+remove_datapath_id({DatapathID,DatapathMac}) ->
+    true=ets:delete(?DATAPATH_TBL,{DatapathID,DatapathMac}).
+
+add_aux_id(Entry,{DatapathID,Datapath},[AuxID,ConnPID]) ->
     CurrentAuxs = element(4,Entry),
-    ets:update_element(of_driver_channel_datapath,DataPathID,{4,[[AuxID,ConnPID]|CurrentAuxs]}).
+    true=ets:update_element(?DATAPATH_TBL,{DatapathID,Datapath},{4,[[AuxID,ConnPID]|CurrentAuxs]}).
 
-lookup_datapath_id(DataPathID) ->
-    ets:lookup(of_driver_channel_datapath,DataPathID).
+lookup_datapath_id({DatapathID,Datapath}) ->
+    ets:lookup(?DATAPATH_TBL,{DatapathID,Datapath}).

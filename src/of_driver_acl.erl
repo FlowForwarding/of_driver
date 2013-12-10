@@ -1,92 +1,76 @@
 -module(of_driver_acl).
 
--define(WHITE,of_driver_acl_white).
--define(BLACK,of_driver_acl_black).
--define(COLS,{key :: atom() | inet:ip4_address() | inet:ip6_address(),
-              val :: any()
-             }).
+-include_lib("of_driver/include/of_driver_acl.hrl").
 
--record(?WHITE,?COLS).
--record(?BLACK,?COLS).
-
--export([create_table/0,
-         create_table/1,
-         write/2,
-         read/2,
-         delete/2
+-export([ create_table/0,
+          create_table/1,
+          write/1,
+          write/3,
+          read/1,
+          delete/1,
+          all/0
         ]).
 
 create_table() ->
     ok=create_table([node()]),
-    write(any,white).
+    write(any,ofs_handler,[]).
 
 create_table(NodeList) ->
-    table_exists(?WHITE,NodeList),
-    table_exists(?BLACK,NodeList).
+    table_exists(?ACL_TBL,NodeList).
 
 table_exists(Tbl,NodeList) ->
     try
 	_Props = mnesia:table_info(Tbl,all),
 	ok
     catch
-	exit:{aborted,{no_exists,?WHITE,all}} ->
-	    {atomic,ok} = mnesia:create_table(?WHITE,[{type,set},{disc_copies,NodeList},{attributes, record_info(fields, ?WHITE)}]);
-	exit:{aborted,{no_exists,?BLACK,all}} ->
-	    {atomic,ok} = mnesia:create_table(?BLACK,[{type,set},{disc_copies,NodeList},{attributes, record_info(fields, ?BLACK)}])
+	exit:{aborted,{no_exists,?ACL_TBL,all}} ->
+	    {atomic,ok} = mnesia:create_table(?ACL_TBL,[{type,set},{disc_copies,NodeList},{attributes, record_info(fields, ?ACL_TBL)}])
     end.
 
-write(Address,Tbl) when is_list(Address) ->
+write(Address) ->
+    write(Address,ofs_handler,[]).
+
+write(Address,SwitchHandler,Opts) when is_list(Address) ->
     case string:tokens(Address,".:") of
-        [O1,O2,O3,O4]             -> write({ti(O1),ti(O2),ti(O3),ti(O4)},Tbl);
-        [O1,O2,O3,O4,O5,O6,O7,O8] -> write({ti(O1),ti(O2),ti(O3),ti(O4),ti(O5),ti(O6),ti(O7),ti(O8)},Tbl);
+        [O1,O2,O3,O4]             -> write({ti(O1),ti(O2),ti(O3),ti(O4)},SwitchHandler,Opts);
+        [O1,O2,O3,O4,O5,O6,O7,O8] -> write({ti(O1),ti(O2),ti(O3),ti(O4),ti(O5),ti(O6),ti(O7),ti(O8)},SwitchHandler,Opts);
         _                         -> {error, einval}
     end;
-write(Address,Tbl) when is_tuple(Address) and ( (size(Address) =:= 4) or (size(Address) =:= 6) ) ->
-    TblName=tbl_name(Tbl),
-    case mnesia:dirty_read(TblName,any) of
-        [E] -> mnesia:dirty_delete(TblName,element(2,E));
+write(Address,SwitchHandler,Opts) when is_tuple(Address) and ( (size(Address) =:= 4) or (size(Address) =:= 6) ) ->
+    case mnesia:dirty_read(any) of
+        [E] -> mnesia:dirty_delete(?ACL_TBL,element(2,E));
         []  -> ok
     end,
-    write_valid(Address,Tbl);
-write(any,Tbl) ->
-    clear(Tbl),
-    write_valid(any,Tbl);
-write(_,_) ->
-    {error,invalid_address}.
+    write_valid(Address,SwitchHandler,Opts);
+write(any,SwitchHandler,Opts) ->
+    clear(),
+    write_valid(any,SwitchHandler,Opts);
+write(_,_,_) ->
+    {error, einval}.
 
-write_valid(Address,white) ->
-    mnesia:dirty_write(#?WHITE{key=Address});
-write_valid(Address,black) ->
-    mnesia:dirty_write(#?BLACK{key=Address}).
+write_valid(Address,SwitchHandler,Opts) ->
+    ok = mnesia:dirty_write(#?ACL_TBL{ip_address=Address,switch_handler=SwitchHandler,opts=Opts}).
 
-clear(white) -> {atomic,ok} = mnesia:clear_table(?WHITE);
-clear(black) -> {atomic,ok} = mnesia:clear_table(?BLACK).
+clear() ->
+    {atomic,ok} = mnesia:clear_table(?ACL_TBL).
 
-tbl_name(white) -> ?WHITE;
-tbl_name(black) -> ?BLACK.
-
-read(Address,white) ->
-    check_tbl(?WHITE,Address);
-read(Address,black) ->
-    check_tbl(?BLACK,Address).
-
-delete(Address,white) ->
-    mnesia:dirty_delete(?WHITE,Address);
-delete(Address,black) ->
-    mnesia:dirty_delete(?BLACK,Address).
-
-check_tbl(Tbl,Address) ->
-    case mnesia:dirty_read(Tbl,any) of
-        [_] -> true;
-        []  -> table_scan(Tbl,mnesia:dirty_first(Tbl),Address)
+read(Address) when is_tuple(Address) ->
+    case mnesia:dirty_read(?ACL_TBL,any) of
+        [E] -> {true,E};
+        []  -> false
     end.
 
-table_scan(_,'$end_of_table',_) ->
-    false;
-table_scan(_Tbl,Key,Address) when Key =:= Address ->
-    true;
-table_scan(Tbl,Key,Address) ->
-    table_scan(Tbl,mnesia:dirty_next(Tbl,Key),Address).    
+delete(Address) when  is_tuple(Address) or Address =:= any  ->
+    ok = mnesia:dirty_delete(?ACL_TBL,Address).
+
+all() ->
+    {atomic,List} = mnesia:transaction( fun() -> all_tbl(mnesia:first(?ACL_TBL),[]) end ),
+    List.
+
+all_tbl('$end_of_table',Result) ->
+    Result; %% Do we really have to reverse ?
+all_tbl(Key,Result) ->
+    all_tbl(mnesia:next(?ACL_TBL,Key),[ mnesia:read(?ACL_TBL,Key) | Result ]).
 
 ti(V) when is_list(V) ->
     list_to_integer(V);

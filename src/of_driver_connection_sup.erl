@@ -3,7 +3,7 @@
 -behaviour(supervisor).
 
 -export([start_link/0, init/1]).
--export([start_child/1
+-export([start_child/2
         ]).
 
 start_link() ->
@@ -20,5 +20,5 @@ init([]) ->
           ]}
     }.
 
-start_child(Socket) ->
-    supervisor:start_child(?MODULE,[Socket]).
+start_child(Socket,SwitchHandler) ->
+    supervisor:start_child(?MODULE,[Socket,SwitchHandler]).

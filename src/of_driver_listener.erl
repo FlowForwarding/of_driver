@@ -2,6 +2,8 @@
 
 -behaviour(gen_server).
 
+-include_lib("of_driver/include/of_driver_acl.hrl").
+
 -export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 %% API
@@ -29,19 +31,19 @@ init(_) ->
     {ok, LSocket} = gen_tcp:listen(Port,[binary, {packet, raw}, {active, false}, {reuseaddr, true}]),
     {ok, #?STATE{lsock=LSocket}}.
 
-handle_call(Msg,_From,State) ->
-    io:format("... [~p] Unknown handle_info ~p ...\n",[?MODULE,Msg]),
+handle_call(_Msg,_From,State) ->
+    %% io:format("... [~p]  !!! Unknown handle_info ~p !!!...\n",[?MODULE,Msg]),
     {reply,ok,State}.
 
 handle_cast(startup, #?STATE{lsock=LSocket} = State) ->
     spawn_link(?MODULE,accept,[LSocket]),
     {noreply,State};
-handle_cast(Msg, State) ->
-    io:format("... [~p] !!! Unknown handle_cast ~p !!!...\n",[?MODULE,Msg]),
+handle_cast(_Msg, State) ->
+    %%io:format("... [~p] !!! Unknown handle_cast ~p !!!...\n",[?MODULE,Msg]),
     {noreply, State}.
 
-handle_info(Msg,State) ->
-    io:format("... [~p] Unknown handle_info ~p ...\n",[?MODULE,Msg]),
+handle_info(_Msg,State) ->
+    %% io:format("... [~p] !!! Unknown handle_info ~p !!!...\n",[?MODULE,Msg]),
     {noreply,State}.
 
 terminate(_Reason, _State) ->
@@ -56,10 +58,10 @@ accept(ListenSocket) ->
     case gen_tcp:accept(ListenSocket) of
         {ok, Socket} ->
             {ok, {Address, Port}}=inet:peername(Socket),
-            %% io:format("... [~p] peername: ~p ...\n ",[?MODULE,{Address, Port}]),
+            io:format("... [~p] peername: ~p ...\n ",[?MODULE,{Address, Port}]),
             case of_driver_db:allowed(Address) of
-                true ->
-                    {ok,ConnCtrlPID} = of_driver_connection_sup:start_child(Socket),
+                {true,#?ACL_TBL{ switch_handler = SwitchHandler } = _Entry} ->
+                    {ok,ConnCtrlPID} = of_driver_connection_sup:start_child(Socket,SwitchHandler),
                     ok = gen_tcp:controlling_process(Socket,ConnCtrlPID),
                     accept(ListenSocket);
                 false ->
@@ -67,7 +69,7 @@ accept(ListenSocket) ->
                     gen_tcp:close(Socket),
                     accept(ListenSocket)
             end;
-        Error ->
+        _Error ->
             %% io:format("... [~p] Accept Error : ~p\n",[?MODULE,Error]),
             accept(ListenSocket)
     end.

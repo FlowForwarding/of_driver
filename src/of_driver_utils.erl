@@ -12,9 +12,26 @@
          create_hello/1,
          create_unsupported_hello/1,
          create_features_request/1,
-         get_datapath_id/2,
+         get_datapath_info/2,
 	 get_aux_id/2
         ]).
+-export([list_connections/0,
+         list_connections/1,
+         connection_info/1
+        ]).
+
+list_connections() -> 
+    %% [Connection].
+    ok.
+
+%% list_connections(IpAddr | DataPathId) -> 
+list_connections(_Var) ->
+    %% [Connection].
+    ok.
+
+connection_info(_Connection) ->
+    %% #state{} (?)
+    ok.
 
 mod(3) ->
     {ok,of_driver_v3};
@@ -52,15 +69,15 @@ create_unsupported_hello(Version) ->
     <<(16#5):8, Rest/binary>>.
 
 create_features_request(Version) ->
-    version_and_run(Version,features_request,[]).
+    apply_version(Version,features_request,[]).
 
-get_datapath_id(Version,OfpFeaturesReply) ->
-    version_and_run(Version,datapath_id,[OfpFeaturesReply]).
+get_datapath_info(Version,OfpFeaturesReply) ->
+    apply_version(Version,get_datapath_info,[OfpFeaturesReply]).
 
 get_aux_id(Version,OfpFeaturesReply) -> %% NOTE: v3 has no auxiliary_id
-    version_and_run(Version,get_aux_id,[OfpFeaturesReply]).
+    apply_version(Version,get_aux_id,[OfpFeaturesReply]).
 
-version_and_run(Version,Function,Args) ->
+apply_version(Version,Function,Args) ->
     case mod(Version) of
 	{ok,M} -> apply(M,Function,Args);
 	Error  -> Error
