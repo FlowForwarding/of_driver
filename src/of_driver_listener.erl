@@ -58,7 +58,7 @@ accept(ListenSocket) ->
     case gen_tcp:accept(ListenSocket) of
         {ok, Socket} ->
             {ok, {Address, Port}}=inet:peername(Socket),
-            io:format("... [~p] peername: ~p ...\n ",[?MODULE,{Address, Port}]),
+            %% io:format("... [~p] peername: ~p ...\n ",[?MODULE,{Address, Port}]),
             case of_driver_db:allowed(Address) of
                 {true,#?ACL_TBL{ switch_handler = SwitchHandler } = _Entry} ->
                     {ok,ConnCtrlPID} = of_driver_connection_sup:start_child(Socket,SwitchHandler),

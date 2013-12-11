@@ -31,9 +31,9 @@ start_link(Socket,SwitchHandler) ->
     gen_server:start_link(?MODULE, [Socket,SwitchHandler], []).
 
 init([Socket,SwitchHandler]) ->
-    
+
     %% The switch uses this SwitchHandler the next time it connects. 
-    
+
     Protocol=tcp,
     of_driver_utils:setopts(Protocol,Socket,[{active, once}]),
     {ok, #?STATE{ switch_handler = SwitchHandler,
@@ -116,15 +116,13 @@ code_change(_OldVsn, State, _Extra) ->
 close_of_connection(#?STATE{ socket = Socket,
                              datapath_id = DatapathID,
                              datapath_mac = DatapathMac,
-                             conn_role = ConnRole
-                           } = _State) ->
-    io:format(" >>> ~p <<<\n",[ets:tab2list(of_driver_channel_datapath)]),
-    io:format("... [~p] of_driver_db:remove_datapath_id({~p,~p}) ConnRole:~p \n\n",[?MODULE,DatapathID,DatapathMac,ConnRole]),
+                             conn_role = ConnRole,
+                             aux_id = AuxID } = _State) ->
     case ConnRole of
-        main ->
-            true=of_driver_db:remove_datapath_id({DatapathID,DatapathMac});
-        _Else ->
-            ok
+        main -> 
+            of_driver_db:remove_datapath_id({DatapathID,DatapathMac});
+        aux  -> 
+            of_driver_db:remove_datapath_aux_id({DatapathID,DatapathMac},AuxID)
     end,
     ok = terminate_connection(Socket),
     erlang:exit(self(),kill). %% Todo; review exit/close strategy...
@@ -138,25 +136,25 @@ handle_message(#ofp_message{ version = Version, type = features_reply, body = Bo
 
 handle_message(#ofp_message{ version = Version, type = features_reply, body = Body } = _Msg, State) ->
     [DatapathID,DatapathMac]=of_driver_utils:get_datapath_info(Version,Body),
-    %% io:format("... [~p] DatapathID ~p DatapathMac ~p ... \n",[?MODULE,DatapathID,DatapathMac]),
     AuxID=of_driver_utils:get_aux_id(Version,Body),
-    case of_driver_db:lookup_datapath_id({DatapathID,DatapathMac}) of
-        [] when AuxID =:= 0 ->
-            {ok,ChannelPID} = of_driver_channel_sup:start_child({DatapathID,DatapathMac}),
-            %%io:format("... [~p] Created channel ~p ... \n",[?MODULE,ChannelPID]),
-            of_driver_db:insert_datapath_id({DatapathID,DatapathMac},self(),ChannelPID),
-            State#?STATE{ datapath_id = DatapathID, datapath_mac = DatapathMac };
-        [Entry] when AuxID =/= 0 ->
-            %% add aux entry...
-            %%io:format("... [~p] Adding Aux entry AuxID:~p...\n",[?MODULE,AuxID]),
-	    of_driver_db:add_aux_id(Entry,{DatapathID,DatapathMac},[AuxID,self()]),
-	    State#?STATE{ conn_role = aux };
-        _Else ->
-	    %% io:format("... [~p] Jip, else just happened\n...Else:~p... \n",[?MODULE,Else]),
-            %% io:format("... CLOSE 5 ...\n",[]),
-            close_of_connection(State),
-	    State
-    end;
+    NewState=
+        case of_driver_db:lookup_datapath_id({DatapathID,DatapathMac}) of
+            [] when AuxID =:= 0 ->
+                {ok,ChannelPID} = of_driver_channel_sup:start_child({DatapathID,DatapathMac}),
+                %%io:format("... [~p] Created channel ~p ... \n",[?MODULE,ChannelPID]),
+                of_driver_db:insert_datapath_id({DatapathID,DatapathMac},self(),ChannelPID),
+                State#?STATE{ conn_role = main };
+            [Entry] when AuxID =/= 0 ->
+                %% add aux entry...
+                %%io:format("... [~p] Adding Aux entry AuxID:~p...\n",[?MODULE,AuxID]),
+                of_driver_db:add_aux_id(Entry,{DatapathID,DatapathMac},[AuxID,self()]),
+                State#?STATE{ conn_role = aux, aux_id = AuxID };
+            _Else ->
+                close_of_connection(State),
+                State
+        end,
+    NewState#?STATE{ datapath_id = DatapathID, datapath_mac = DatapathMac };
+
 handle_message(#ofp_message{ version = _Version, type = _Type, body = _Body } = _Msg,State) ->
     %% io:format("... [~p] Unknown MSG ~p Not doing anything... \n",[?MODULE,Body]),
     State.

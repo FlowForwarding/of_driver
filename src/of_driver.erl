@@ -5,6 +5,7 @@
 
 -export([ start/0,
           start_link/0,
+          grant_ipaddr/1,
           grant_ipaddr/3,
           revoke_ipaddr/1,
           get_allowed_ipaddrs/0,
@@ -22,10 +23,17 @@
 %%------------------------------------------------------------------
 
 start() ->
+    start(6633).
+
+start(Port) ->
     ok.
 
 start_link() ->
     ok.
+
+-spec grant_ipaddr(IpAddr :: inet:ip_address()) -> ok | {error, einval}.
+grant_ipaddr(IpAddr) ->
+    grant_ipaddr(IpAddr,ofs_handker,[]).
 
 -spec grant_ipaddr(IpAddr        :: inet:ip_address(), 
                    SwitchHandler :: term(),

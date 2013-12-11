@@ -17,6 +17,7 @@
 
 -export([ insert_datapath_id/3,
           remove_datapath_id/1,
+          remove_datapath_aux_id/2,
           lookup_datapath_id/1,
           add_aux_id/3
         ]).
@@ -37,10 +38,8 @@ install_try() ->
     application:stop(mnesia),
     mnesia:create_schema([node()]),
     application:start(mnesia),
-    
     ok = of_driver_acl:create_table([node()]),
-    
-    ok = mnesia:wait_for_tables([of_driver_acl_white,of_driver_acl_black],infinity),
+    ok = mnesia:wait_for_tables([of_driver_acl],infinity),
     case ets:info(?DATAPATH_TBL) of
         undefined ->
             ?DATAPATH_TBL = ets:new(?DATAPATH_TBL,[ordered_set,public,named_table]),
@@ -80,9 +79,20 @@ insert_datapath_id({DatapathID,DatapathMac},ChannelPID,ConnPID) ->
 remove_datapath_id({DatapathID,DatapathMac}) ->
     true=ets:delete(?DATAPATH_TBL,{DatapathID,DatapathMac}).
 
+remove_datapath_aux_id({DatapathID,DatapathMac},AuxID) ->
+    case lookup_datapath_id({DatapathID,DatapathMac}) of
+        []      -> false;
+        [Entry] -> remove_aux_id(Entry,{DatapathID,DatapathMac},AuxID)
+    end.
+
 add_aux_id(Entry,{DatapathID,Datapath},[AuxID,ConnPID]) ->
     CurrentAuxs = element(4,Entry),
-    true=ets:update_element(?DATAPATH_TBL,{DatapathID,Datapath},{4,[[AuxID,ConnPID]|CurrentAuxs]}).
+    true=ets:update_element(?DATAPATH_TBL,{DatapathID,Datapath},{4,[{AuxID,ConnPID}|CurrentAuxs]}).
 
-lookup_datapath_id({DatapathID,Datapath}) ->
-    ets:lookup(?DATAPATH_TBL,{DatapathID,Datapath}).
+remove_aux_id(Entry,{DatapathID,Datapath},AuxID) ->
+    CurrentAuxs = element(4,Entry),
+    Updated=lists:keydelete(AuxID,1,CurrentAuxs),
+    true=ets:update_element(?DATAPATH_TBL,{DatapathID,Datapath},{4,Updated}).
+
+lookup_datapath_id({DatapathID,DatapathMac}) ->
+    ets:lookup(?DATAPATH_TBL,{DatapathID,DatapathMac}).

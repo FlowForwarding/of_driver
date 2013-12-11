@@ -12,8 +12,7 @@
         ]).
 
 create_table() ->
-    ok=create_table([node()]),
-    write(any,ofs_handler,[]).
+    ok=create_table([node()]).
 
 create_table(NodeList) ->
     table_exists(?ACL_TBL,NodeList).
@@ -24,7 +23,8 @@ table_exists(Tbl,NodeList) ->
 	ok
     catch
 	exit:{aborted,{no_exists,?ACL_TBL,all}} ->
-	    {atomic,ok} = mnesia:create_table(?ACL_TBL,[{type,set},{disc_copies,NodeList},{attributes, record_info(fields, ?ACL_TBL)}])
+	    {atomic,ok} = mnesia:create_table(?ACL_TBL,[{type,set},{disc_copies,NodeList},{attributes, record_info(fields, ?ACL_TBL)}]),
+            ok
     end.
 
 write(Address) ->
@@ -37,7 +37,7 @@ write(Address,SwitchHandler,Opts) when is_list(Address) ->
         _                         -> {error, einval}
     end;
 write(Address,SwitchHandler,Opts) when is_tuple(Address) and ( (size(Address) =:= 4) or (size(Address) =:= 6) ) ->
-    case mnesia:dirty_read(any) of
+    case mnesia:dirty_read(?ACL_TBL,any) of
         [E] -> mnesia:dirty_delete(?ACL_TBL,element(2,E));
         []  -> ok
     end,
@@ -56,8 +56,13 @@ clear() ->
 
 read(Address) when is_tuple(Address) ->
     case mnesia:dirty_read(?ACL_TBL,any) of
-        [E] -> {true,E};
-        []  -> false
+        [E] -> 
+            {true,E};
+        [] -> 
+            case mnesia:dirty_read(?ACL_TBL,Address) of
+                [E2] -> {true,E2};
+                []   -> false
+            end
     end.
 
 delete(Address) when  is_tuple(Address) or Address =:= any  ->
