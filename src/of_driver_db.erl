@@ -23,7 +23,7 @@
         ]).
 
 
-%%--- Provisioning -----------------------------------------------------------------------------------------------
+%%--- Provisioning -----------------------------------------------------------
 
 install() ->
     try
@@ -42,13 +42,14 @@ install_try() ->
     ok = mnesia:wait_for_tables([of_driver_acl],infinity),
     case ets:info(?DATAPATH_TBL) of
         undefined ->
-            ?DATAPATH_TBL = ets:new(?DATAPATH_TBL,[ordered_set,public,named_table]),
+            ?DATAPATH_TBL = ets:new(?DATAPATH_TBL,
+                                        [ordered_set, public, named_table]),
 	    ok;
         _Options ->
             ok
     end.
 
-%%--- IP white/black list  ------------------------------------------------------------------------------------------------
+%%--- IP white/black list  --------------------------------------------------
 
 clear_acl_list() ->
     of_driver_acl:clear().
@@ -60,8 +61,8 @@ allowed(Address) ->
 -spec grant_ipaddr(IpAddr        :: inet:ip_address(), 
                    SwitchHandler :: term(),
                    Opts          :: list()) -> ok | {error, einval}.
-grant_ipaddr(IpAddr,SwitchHandler,Opts) ->
-    of_driver_acl:write(IpAddr,SwitchHandler,Opts).
+grant_ipaddr(IpAddr, SwitchHandler, Opts) ->
+    of_driver_acl:write(IpAddr, SwitchHandler, Opts).
 
 -spec revoke_ipaddr(IpAddr :: inet:ip_address()) -> ok | {error, einval}.
 revoke_ipaddr(IpAddr) ->
@@ -71,28 +72,29 @@ revoke_ipaddr(IpAddr) ->
 get_allowed_ipaddrs() ->
     of_driver_acl:all().
 
-%%--- Datapath ID/Mac ------------------------------------------------------------------------------------------------
+%%--- Datapath ID/Mac -----------------------------------------------------
 
-insert_datapath_id({DatapathID,DatapathMac},ChannelPID,ConnPID) ->
-    true=ets:insert_new(?DATAPATH_TBL,{{DatapathID,DatapathMac},ChannelPID,ConnPID,_AuxConnections=[]}).
+insert_datapath_id({DatapathID, DatapathMac}, ChannelPID, ConnPID) ->
+    true = ets:insert_new(?DATAPATH_TBL,
+        {{DatapathID, DatapathMac}, ChannelPID, ConnPID, _AuxConnections=[]}).
 
-remove_datapath_id({DatapathID,DatapathMac}) ->
-    true=ets:delete(?DATAPATH_TBL,{DatapathID,DatapathMac}).
+remove_datapath_id({DatapathID, DatapathMac}) ->
+    true = ets:delete(?DATAPATH_TBL, {DatapathID, DatapathMac}).
 
-remove_datapath_aux_id({DatapathID,DatapathMac},AuxID) ->
-    case lookup_datapath_id({DatapathID,DatapathMac}) of
+remove_datapath_aux_id({DatapathID, DatapathMac}, AuxID) ->
+    case lookup_datapath_id({DatapathID, DatapathMac}) of
         []      -> false;
-        [Entry] -> remove_aux_id(Entry,{DatapathID,DatapathMac},AuxID)
+        [Entry] -> remove_aux_id(Entry, {DatapathID, DatapathMac}, AuxID)
     end.
 
-add_aux_id(Entry,{DatapathID,Datapath},[AuxID,ConnPID]) ->
-    CurrentAuxs = element(4,Entry),
-    true=ets:update_element(?DATAPATH_TBL,{DatapathID,Datapath},{4,[{AuxID,ConnPID}|CurrentAuxs]}).
+add_aux_id(Entry, {DatapathID, Datapath}, [AuxID, ConnPID]) ->
+    CurrentAuxs = element(4, Entry),
+    true = ets:update_element(?DATAPATH_TBL, {DatapathID, Datapath}, {4, [{AuxID,ConnPID} | CurrentAuxs]}).
 
-remove_aux_id(Entry,{DatapathID,Datapath},AuxID) ->
+remove_aux_id(Entry, {DatapathID, Datapath}, AuxID) ->
     CurrentAuxs = element(4,Entry),
     Updated=lists:keydelete(AuxID,1,CurrentAuxs),
     true=ets:update_element(?DATAPATH_TBL,{DatapathID,Datapath},{4,Updated}).
 
-lookup_datapath_id({DatapathID,DatapathMac}) ->
-    ets:lookup(?DATAPATH_TBL,{DatapathID,DatapathMac}).
+lookup_datapath_id({DatapathID, DatapathMac}) ->
+    ets:lookup(?DATAPATH_TBL,{DatapathID, DatapathMac}).

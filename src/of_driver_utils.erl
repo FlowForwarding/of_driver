@@ -34,15 +34,15 @@ connection_info(_Connection) ->
     ok.
 
 mod(3) ->
-    {ok,of_driver_v3};
+    {ok, of_driver_v3};
 mod(4) ->
-    {ok,of_driver_v4};
+    {ok, of_driver_v4};
 mod(_) ->
-    {error,bad_version}.
+    {error, bad_version}.
 
-conf_default(Entry,Guard,Default) ->
+conf_default(Entry, Guard, Default) ->
     case application:get_env(of_driver,Entry) of
-	{ok,Value} -> 
+	{ok, Value} -> 
             case Guard(Value) of
                 true -> Value;
                 false -> Default
@@ -71,19 +71,19 @@ create_unsupported_hello(Version) ->
 create_features_request(Version) ->
     apply_version(Version,features_request,[]).
 
-get_datapath_info(Version,OfpFeaturesReply) ->
-    apply_version(Version,get_datapath_info,[OfpFeaturesReply]).
+get_datapath_info(Version, OfpFeaturesReply) ->
+    apply_version(Version, get_datapath_info, [OfpFeaturesReply]).
 
-get_aux_id(Version,OfpFeaturesReply) -> %% NOTE: v3 has no auxiliary_id
-    apply_version(Version,get_aux_id,[OfpFeaturesReply]).
+get_aux_id(Version, OfpFeaturesReply) -> %% NOTE: v3 has no auxiliary_id
+    apply_version(Version, get_aux_id, [OfpFeaturesReply]).
 
-apply_version(Version,Function,Args) ->
+apply_version(Version, Function, Args) ->
     case mod(Version) of
-	{ok,M} -> apply(M,Function,Args);
+	{ok, M} -> apply(M, Function, Args);
 	Error  -> Error
     end.
 
-%%------------------------------------------------------------------------------------
+%%-----------------------------------------------------------------------------
 
 connect(tcp, Host, Port) ->
     gen_tcp:connect(Host, Port, opts(tcp), 5000);
@@ -123,4 +123,4 @@ close(tcp, Socket) ->
 close(tls, Socket) ->
     ssl:close(Socket).
 
-%%------------------------------------------------------------------------------------
+%%----------------------------------------------------------------------------

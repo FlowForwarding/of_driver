@@ -10,7 +10,7 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    C=of_driver_channel,
+    C = of_driver_channel,
     RestartStrategy = simple_one_for_one,
     MaxRestarts = 1000,
     MaxSecondsBetweenRestarts = 3600,
@@ -21,4 +21,4 @@ init([]) ->
     }.
 
 start_child(DatapathId) ->
-    supervisor:start_child(?MODULE,[DatapathId]).
+    supervisor:start_child(?MODULE, [DatapathId]).

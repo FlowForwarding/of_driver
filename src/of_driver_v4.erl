@@ -13,9 +13,9 @@ features_request() ->
     #ofp_message{version = 4, xid = 0, body = Body}.
 
 get_datapath_info(Rec) ->
-    #ofp_features_reply{ datapath_id = DatapathID, datapath_mac = DatapathMac } = Rec,
+    #ofp_features_reply{datapath_id = DatapathID, datapath_mac = DatapathMac} = Rec,
     [DatapathID,DatapathMac].
 
 get_aux_id(Rec) ->
-    #ofp_features_reply{ auxiliary_id = AuxID } = Rec,
+    #ofp_features_reply{auxiliary_id = AuxID} = Rec,
     AuxID.

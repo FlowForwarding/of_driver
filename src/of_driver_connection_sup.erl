@@ -10,7 +10,7 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    C=of_driver_connection,
+    C = of_driver_connection,
     RestartStrategy = simple_one_for_one,
     MaxRestarts = 1000,
     MaxSecondsBetweenRestarts = 3600,
@@ -20,5 +20,5 @@ init([]) ->
           ]}
     }.
 
-start_child(Socket,SwitchHandler) ->
-    supervisor:start_child(?MODULE,[Socket,SwitchHandler]).
+start_child(Socket, SwitchHandler) ->
+    supervisor:start_child(?MODULE, [Socket, SwitchHandler]).

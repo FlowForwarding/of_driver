@@ -12,5 +12,5 @@ features_request() ->
     #ofp_message{version = 3, xid = 0, body = Body}.
 
 datapath_id(Rec) ->
-    #ofp_features_reply{ datapath_id = DatapathID } = Rec,
+    #ofp_features_reply{datapath_id = DatapathID} = Rec,
     DatapathID.
