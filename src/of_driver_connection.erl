@@ -102,8 +102,9 @@ handle_info({tcp, Socket, Data},#?STATE{ parser        = undefined,
                     %% TODO: !!! check that CONNECTION gets stored correctly.
                     %% and do something with Leftovers ... 
                     {ok, Parser} = ofp_parser:new(Version),
-                    %% {ok, FeaturesBin} = of_protocol:encode(of_driver_utils:create_features_request(Version)),
-                    {ok,FeaturesBin} = of_protocol:encode(of_msg_lib:get_features(4)), %% 
+                    {ok, FeaturesBin} = of_protocol:encode(of_driver_utils:create_features_request(Version)),
+                    %% TODO: use of_msg_lib
+                    %% {ok,FeaturesBin} = of_protocol:encode(of_msg_lib:get_features(4)), %% 
                     ok = of_driver_utils:send(Protocol, Socket, FeaturesBin),
                     {noreply, State#?STATE{parser = Parser, version = Version}}
             end;
