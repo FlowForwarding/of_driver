@@ -1,4 +1,12 @@
+%%%-------------------------------------------------------------------
+%%% @copyright (C) 1999-2013, Erlang Solutions Ltd
+%%% @author Ruan Pienaar <ruan.pienaar@erlang-solutions.com>
+%%% @doc 
+%%% 
+%%% @end
+%%%-------------------------------------------------------------------
 -module(of_driver_sup).
+-copyright("2013, Erlang Solutions Ltd.").
 
 -behaviour(supervisor).
 
@@ -20,8 +28,8 @@ init([]) ->
     Shutdown = 2000,
     Type = worker,
     
-    Ch = of_driver_channel_sup,
-    ChSup = {Ch, {Ch, start_link, []}, Restart, Shutdown, Type, [Ch]},
+    %% Ch = of_driver_channel_sup,
+    %% ChSup = {Ch, {Ch, start_link, []}, Restart, Shutdown, Type, [Ch]},
     
     C = of_driver_connection_sup,
     CSup = {C, {C, start_link, []}, Restart, Shutdown, Type, [C]},
@@ -29,7 +37,7 @@ init([]) ->
     L = of_driver_listener,
     LChild = {L, {L, start_link, []}, Restart, Shutdown, Type, [L]},
     
-    {ok, {SupFlags, [ ChSup,
+    {ok, {SupFlags, [ %% ChSup,
 		      CSup,
                       LChild
 		    ]}

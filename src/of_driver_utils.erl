@@ -1,4 +1,12 @@
+%%%-------------------------------------------------------------------
+%%% @copyright (C) 1999-2013, Erlang Solutions Ltd
+%%% @author Ruan Pienaar <ruan.pienaar@erlang-solutions.com>
+%%% @doc 
+%%% General Utility functions.
+%%% @end
+%%%-------------------------------------------------------------------
 -module(of_driver_utils).
+-copyright("2013, Erlang Solutions Ltd.").
 
 -include_lib("of_protocol/include/of_protocol.hrl").
 
@@ -10,7 +18,6 @@
         ]).
 -export([conf_default/3,
          create_hello/1,
-         create_unsupported_hello/1,
          create_features_request/1,
          get_datapath_info/2,
 	 get_aux_id/2
@@ -40,10 +47,10 @@ mod(4) ->
 mod(_) ->
     {error, bad_version}.
 
-conf_default(Entry, Guard, Default) ->
+conf_default(Entry, GuardFun, Default) ->
     case application:get_env(of_driver,Entry) of
 	{ok, Value} -> 
-            case Guard(Value) of
+            case GuardFun(Value) of
                 true -> Value;
                 false -> Default
             end;
@@ -62,11 +69,6 @@ create_hello(Versions) when is_list(Versions) ->
                    #ofp_hello{}
            end,
     #ofp_message{version = Version, xid = 0, body = Body}.
-
-create_unsupported_hello(Version) ->
-    {ok, EncodedHello} = of_protocol:encode(create_hello(Version)),
-    <<_:8, Rest/binary>> = EncodedHello,
-    <<(16#5):8, Rest/binary>>.
 
 create_features_request(Version) ->
     apply_version(Version,features_request,[]).

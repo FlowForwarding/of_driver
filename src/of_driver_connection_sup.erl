@@ -1,9 +1,17 @@
+%%%-------------------------------------------------------------------
+%%% @copyright (C) 1999-2013, Erlang Solutions Ltd
+%%% @author Ruan Pienaar <ruan.pienaar@erlang-solutions.com>
+%%% @doc 
+%%% 
+%%% @end
+%%%-------------------------------------------------------------------
 -module(of_driver_connection_sup).
+-copyright("2013, Erlang Solutions Ltd.").
 
 -behaviour(supervisor).
 
 -export([start_link/0, init/1]).
--export([start_child/2
+-export([start_child/1
         ]).
 
 start_link() ->
@@ -20,5 +28,5 @@ init([]) ->
           ]}
     }.
 
-start_child(Socket, SwitchHandler) ->
-    supervisor:start_child(?MODULE, [Socket, SwitchHandler]).
+start_child(Socket) ->
+    supervisor:start_child(?MODULE, [Socket]).

@@ -1,4 +1,12 @@
+%%%-------------------------------------------------------------------
+%%% @copyright (C) 1999-2013, Erlang Solutions Ltd
+%%% @author Ruan Pienaar <ruan.pienaar@erlang-solutions.com>
+%%% @doc 
+%%% 
+%%% @end
+%%%-------------------------------------------------------------------
 -module(of_driver_v4).
+-copyright("2013, Erlang Solutions Ltd.").
 
 -include_lib("of_protocol/include/of_protocol.hrl").
 -include_lib("of_protocol/include/ofp_v4.hrl").
@@ -10,12 +18,12 @@
 
 features_request() ->
     Body = #ofp_features_request{},
-    #ofp_message{version = 4, xid = 0, body = Body}.
+    {ok,#ofp_message{version = 4, xid = 0, body = Body}}.
 
 get_datapath_info(Rec) ->
     #ofp_features_reply{datapath_id = DatapathID, datapath_mac = DatapathMac} = Rec,
-    [DatapathID,DatapathMac].
+    {ok,{DatapathID,DatapathMac}}.
 
 get_aux_id(Rec) ->
     #ofp_features_reply{auxiliary_id = AuxID} = Rec,
-    AuxID.
+    {ok,AuxID}.

@@ -1,4 +1,12 @@
+%%%-------------------------------------------------------------------
+%%% @copyright (C) 1999-2013, Erlang Solutions Ltd
+%%% @author Ruan Pienaar <ruan.pienaar@erlang-solutions.com>
+%%% @doc 
+%%% OF Driver database abstraction module.
+%%% @end
+%%%-------------------------------------------------------------------
 -module(of_driver_db).
+-copyright("2013, Erlang Solutions Ltd.").
 
 -include_lib("of_driver/include/of_driver.hrl").
 -include_lib("of_driver/include/of_driver_acl.hrl").
@@ -10,12 +18,13 @@
 
 -export([ clear_acl_list/0,
           allowed/1,
+          grant_ipaddr/1,
           grant_ipaddr/3,
           revoke_ipaddr/1,
           get_allowed_ipaddrs/0
         ]).
 
--export([ insert_datapath_id/3,
+-export([ insert_datapath_id/2,
           remove_datapath_id/1,
           remove_datapath_aux_id/2,
           lookup_datapath_id/1,
@@ -33,7 +42,7 @@ install() ->
 	    io:format("... [~p] Install failed. ~p.\n...Reason:~p...\n...Stacktrace:~p...\n",[?MODULE,C,E,erlang:get_stacktrace()]),
 	    ok
     end.
-    
+
 install_try() ->
     application:stop(mnesia),
     mnesia:create_schema([node()]),
@@ -43,7 +52,7 @@ install_try() ->
     case ets:info(?DATAPATH_TBL) of
         undefined ->
             ?DATAPATH_TBL = ets:new(?DATAPATH_TBL,
-                                        [ordered_set, public, named_table]),
+                                    [ordered_set, public, named_table]),
 	    ok;
         _Options ->
             ok
@@ -57,6 +66,10 @@ clear_acl_list() ->
 -spec allowed(Address :: inet:ip_address()) -> boolean().
 allowed(Address) ->
     of_driver_acl:read(Address).
+
+-spec grant_ipaddr(IpAddr        :: inet:ip_address()) -> ok | {error, einval}.
+grant_ipaddr(IpAddr) ->
+    of_driver_acl:write(IpAddr).
 
 -spec grant_ipaddr(IpAddr        :: inet:ip_address(), 
                    SwitchHandler :: term(),
@@ -74,27 +87,32 @@ get_allowed_ipaddrs() ->
 
 %%--- Datapath ID/Mac -----------------------------------------------------
 
-insert_datapath_id({DatapathID, DatapathMac}, ChannelPID, ConnPID) ->
-    true = ets:insert_new(?DATAPATH_TBL,
-        {{DatapathID, DatapathMac}, ChannelPID, ConnPID, _AuxConnections=[]}).
+insert_datapath_id(DatapathInfo, ConnPID) ->
+    true = ets:insert_new(?DATAPATH_TBL,                          
+                          {DatapathInfo, [{main,ConnPID}]}
+                         ).
 
-remove_datapath_id({DatapathID, DatapathMac}) ->
-    true = ets:delete(?DATAPATH_TBL, {DatapathID, DatapathMac}).
+remove_datapath_id(DatapathInfo) ->
+    true = ets:delete(?DATAPATH_TBL, DatapathInfo).
 
-remove_datapath_aux_id({DatapathID, DatapathMac}, AuxID) ->
-    case lookup_datapath_id({DatapathID, DatapathMac}) of
+
+remove_datapath_aux_id(DatapathInfo, AuxID) ->
+    case lookup_datapath_id(DatapathInfo) of
         []      -> false;
-        [Entry] -> remove_aux_id(Entry, {DatapathID, DatapathMac}, AuxID)
+        [Entry] -> remove_aux_id(Entry,DatapathInfo, AuxID)
     end.
 
-add_aux_id(Entry, {DatapathID, Datapath}, [AuxID, ConnPID]) ->
-    CurrentAuxs = element(4, Entry),
-    true = ets:update_element(?DATAPATH_TBL, {DatapathID, Datapath}, {4, [{AuxID,ConnPID} | CurrentAuxs]}).
-
-remove_aux_id(Entry, {DatapathID, Datapath}, AuxID) ->
-    CurrentAuxs = element(4,Entry),
+remove_aux_id(Entry,DatapathInfo, AuxID) ->
+    Pos=2,
+    CurrentAuxs = element(Pos,Entry),
     Updated=lists:keydelete(AuxID,1,CurrentAuxs),
-    true=ets:update_element(?DATAPATH_TBL,{DatapathID,Datapath},{4,Updated}).
+    true=ets:update_element(?DATAPATH_TBL, DatapathInfo, [{Pos,Updated}]).
 
-lookup_datapath_id({DatapathID, DatapathMac}) ->
-    ets:lookup(?DATAPATH_TBL,{DatapathID, DatapathMac}).
+add_aux_id(Entry,DatapathInfo, Aux) ->
+    Pos=2,
+    CurrentAuxs = element(Pos, Entry),
+    Updated=[Aux | CurrentAuxs],
+    true = ets:update_element(?DATAPATH_TBL, DatapathInfo, [{Pos, Updated}]).
+        
+lookup_datapath_id(DatapathInfo) ->
+    ets:lookup(?DATAPATH_TBL,DatapathInfo).

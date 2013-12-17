@@ -1,4 +1,12 @@
+%%%-------------------------------------------------------------------
+%%% @copyright (C) 1999-2013, Erlang Solutions Ltd
+%%% @author Ruan Pienaar <ruan.pienaar@erlang-solutions.com>
+%%% @doc 
+%%% 
+%%% @end
+%%%-------------------------------------------------------------------
 -module(of_driver_channel_sup).
+-copyright("2013, Erlang Solutions Ltd.").
 
 -behaviour(supervisor).
 

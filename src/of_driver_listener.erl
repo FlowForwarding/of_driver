@@ -1,20 +1,24 @@
+%%%-------------------------------------------------------------------
+%%% @copyright (C) 1999-2013, Erlang Solutions Ltd
+%%% @author Ruan Pienaar <ruan.pienaar@erlang-solutions.com>
+%%% @doc 
+%%% OF Driver listener for switch connections.
+%%% @end
+%%%-------------------------------------------------------------------
 -module(of_driver_listener).
+-copyright("2013, Erlang Solutions Ltd.").
 
 -behaviour(gen_server).
 
--include_lib("of_driver/include/of_driver_acl.hrl").
+-export([ start_link/0,
+          init/1,
+          handle_call/3,
+          handle_cast/2,
+          handle_info/2,
+          terminate/2,
+          code_change/3
+        ]).
 
--export([
-    start_link/0,
-    init/1,
-    handle_call/3,
-    handle_cast/2,
-    handle_info/2,
-    terminate/2,
-    code_change/3]).
-
-%% API
--export([connections/0]).
 -export([accept/1]).
 
 -define(SERVER, ?MODULE). 
@@ -23,19 +27,13 @@
 -record(?STATE, { lsock :: inets:socket()
                 }).
 
-%% - API ---
-connections() ->
-    gen_server:call(?MODULE,connections).
-
-%% --------
-
 start_link() ->
     {ok, Pid} = gen_server:start_link({local, ?SERVER}, ?MODULE, [], []),
     ok = gen_server:cast(?MODULE, startup),
     {ok, Pid}.
 
 init(_) ->
-    Port = of_driver_utils:conf_default(listen_port, fun erlang:is_integer/1, 6653),
+    Port = of_driver_utils:conf_default(listen_port, fun erlang:is_integer/1, 6633),
     {ok, LSocket} = gen_tcp:listen(Port,
                 [binary, {packet, raw}, {active, false}, {reuseaddr, true}]),
     {ok, #?STATE{lsock = LSocket}}.
@@ -66,20 +64,13 @@ accept(ListenSocket) ->
     %% io:format("... [~p] accept(ListenSocket) \n",[?MODULE]),
     case gen_tcp:accept(ListenSocket) of
         {ok, Socket} ->
-            {ok, {Address, _Port}} = inet:peername(Socket),
-            %% io:format("[~p] peername: ~p~n ",[?MODULE,{Address, Port}]),
-            case of_driver_db:allowed(Address) of
-                {true, #?ACL_TBL{switch_handler = SwitchHandler} = _Entry} ->
-                    {ok, ConnCtrlPID} =
-                        of_driver_connection_sup:start_child(Socket,
-                                                                SwitchHandler),
-                    ok = gen_tcp:controlling_process(Socket, ConnCtrlPID),
-                    accept(ListenSocket);
-                false ->
-                    %% io:format("[~p] Socket closed to unallowed switch: ~p~n", [?MODULE,Address]),
-                    gen_tcp:close(Socket),
-                    accept(ListenSocket)
-            end;
+            case of_driver_connection_sup:start_child(Socket) of
+                {ok, ConnCtrlPID} ->
+                    ok = gen_tcp:controlling_process(Socket, ConnCtrlPID);
+                {error,_Reason} ->
+                    ok
+            end,
+            accept(ListenSocket);
         _Error ->
             %% io:format("... [~p] Accept Error : ~p~n",[?MODULE,Error]),
             accept(ListenSocket)
@@ -89,4 +80,3 @@ accept(ListenSocket) ->
 
 
 %% TODO: add logging....
-%% TODO, initial version per controller ? ...
