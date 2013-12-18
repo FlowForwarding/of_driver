@@ -38,7 +38,8 @@
                  conn_role = main    :: main | aux,
                  aux_id              :: integer(),
                  datapath_info       :: { DatapathId :: integer(), DatapathMac :: term() },
-                 connection_init     :: boolean()
+                 connection_init     :: boolean(),
+                 handler_state       :: record()
                }).
 
 %%------------------------------------------------------------------
@@ -198,8 +199,8 @@ handle_message(#ofp_message{ version = Version,
                 {ok,AuxID} = of_driver_utils:get_aux_id(Version, Body),
                 handle_datapath(State#?STATE{ datapath_info = DatapathInfo, aux_id = AuxID })
         end,
-    SwitchHandler:init(IpAddr,DatapathInfo,Capabilities,Version,self(),Opts),
-    NewState;
+    {ok,HandlerState} = SwitchHandler:init(IpAddr,DatapathInfo,Capabilities,Version,self(),Opts),
+    NewState#?STATE{ handler_state = HandlerState };
 
 handle_message(Msg,#?STATE{ switch_handler = SwitchHandler } = #?STATE{ connection_init = true } = State) ->
     SwitchHandler:handle_message(Msg),
