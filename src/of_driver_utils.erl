@@ -20,7 +20,8 @@
          create_hello/1,
          create_features_request/1,
          get_datapath_info/2,
-	 get_aux_id/2
+        get_aux_id/2,
+        get_capabilities/2
         ]).
 -export([list_connections/0,
          list_connections/1,
@@ -78,6 +79,9 @@ get_datapath_info(Version, OfpFeaturesReply) ->
 
 get_aux_id(Version, OfpFeaturesReply) -> %% NOTE: v3 has no auxiliary_id
     apply_version(Version, get_aux_id, [OfpFeaturesReply]).
+
+get_capabilities(Version,OfpFeaturesReply) ->
+    apply_version(Version,get_capabilities,[OfpFeaturesReply]).
 
 apply_version(Version, Function, Args) ->
     case mod(Version) of

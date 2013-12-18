@@ -12,7 +12,8 @@
 -include_lib("of_protocol/include/ofp_v3.hrl").
 
 -export([features_request/0,
-         datapath_id/1
+         datapath_id/1,
+         get_capabilities/1
         ]).
 
 features_request() ->
@@ -22,3 +23,7 @@ features_request() ->
 datapath_id(Rec) ->
     #ofp_features_reply{datapath_id = DatapathID} = Rec,
     {ok,DatapathID}.
+
+get_capabilities(Rec) ->
+	#ofp_features_reply{capabilities = Capabilities} = Rec,
+	{ok,Capabilities}.

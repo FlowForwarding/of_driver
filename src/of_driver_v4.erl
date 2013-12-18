@@ -13,7 +13,8 @@
 
 -export([features_request/0,
          get_datapath_info/1,
-	 get_aux_id/1
+		 get_aux_id/1,
+		 get_capabilities/1
         ]).
 
 features_request() ->
@@ -27,3 +28,7 @@ get_datapath_info(Rec) ->
 get_aux_id(Rec) ->
     #ofp_features_reply{auxiliary_id = AuxID} = Rec,
     {ok,AuxID}.
+
+ get_capabilities(Rec) ->
+	#ofp_features_reply{capabilities = Capabilities} = Rec,
+	{ok,Capabilities}.

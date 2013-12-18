@@ -184,7 +184,12 @@ handle_message(#ofp_message{ version = Version,
                                                        switch_handler_opts = Opts,
                                                        address             = IpAddr
                                                      } = State) ->
+
+    io:format("Body : ~p................................\n",[Body]),
+
     {ok,DatapathInfo} = of_driver_utils:get_datapath_info(Version, Body),
+    {ok,Capabilities} = of_driver_utils:get_capabilities(Version, Body),
+
     NewState = 
         case Version of
             3 ->
@@ -193,9 +198,7 @@ handle_message(#ofp_message{ version = Version,
                 {ok,AuxID} = of_driver_utils:get_aux_id(Version, Body),
                 handle_datapath(State#?STATE{ datapath_info = DatapathInfo, aux_id = AuxID })
         end,
-    
-    SwitchHandler:init(IpAddr,DatapathInfo,Version,self(),Opts),
-    
+    SwitchHandler:init(IpAddr,DatapathInfo,Capabilities,Version,self(),Opts),
     NewState;
 
 handle_message(Msg,#?STATE{ switch_handler = SwitchHandler } = #?STATE{ connection_init = true } = State) ->
