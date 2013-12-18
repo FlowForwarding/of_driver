@@ -34,7 +34,7 @@ table_exists(Tbl, NodeList) ->
     end.
 
 write(Address) ->
-    DefaultSwitchHandler = of_driver_utils:conf_default(default_callback_mod, fun erlang:is_atom/1, ofs_handler),
+    DefaultSwitchHandler = of_driver_utils:conf_default(default_callback_mod, fun erlang:is_atom/1, ofs_handler_driver),
     write(Address, DefaultSwitchHandler, []).
 
 write(Address, SwitchHandler, Opts) when is_list(Address) ->
