@@ -93,6 +93,8 @@ handle_info({tcp, Socket, Data},#?STATE{ parser        = undefined,
                                          hello_buffer  = Buffer,
                                          protocol      = Protocol
                                        } = State) ->
+    % handle initial hello from switch to determine OF protocol
+    % version to use on the connection.
     of_driver_utils:setopts(Protocol, Socket, [{active, once}]),
     case of_protocol:decode(<<Buffer/binary, Data/binary>>) of
         {ok, #ofp_message{xid = Xid, body = #ofp_hello{}} = Hello, _Leftovers} ->
@@ -188,6 +190,7 @@ handle_message(#ofp_message{ version = Version,
 
     io:format("Body : ~p................................\n",[Body]),
 
+    % Intercept features_reply for our initial features_request
     {ok,DatapathInfo} = of_driver_utils:get_datapath_info(Version, Body),
     {ok,Capabilities} = of_driver_utils:get_capabilities(Version, Body),
 
