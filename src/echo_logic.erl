@@ -24,8 +24,6 @@
 
 -define(SERVER, ?MODULE). 
 
--record(state, {}).
-
 start_link(Version,Conn) ->
     gen_server:start_link(?MODULE, [Version, Conn], []).
 
@@ -38,7 +36,7 @@ handle_call(_Request, _From, State) ->
     {reply, Reply, State}.
 
 handle_cast({connect, AuxConn},
-              State = #echo_handler_state{aux_conns = AuxConns}) ->
+                #echo_handler_state{aux_conns = AuxConns} = State) ->
     {noreply, State#echo_handler_state{aux_conns =
                                      [AuxConn | AuxConns]}};
 handle_cast({disconnect, AuxConn},#echo_handler_state{aux_conns = AuxConns} = State) ->
@@ -52,12 +50,12 @@ handle_cast({message, Msg}, State) ->
     DecodedMsg = of_msg_lib:decode(Msg),
     handle_message(undefined,undefined,DecodedMsg, State),
     {noreply, State};
-handle_cast(ping, State = #echo_handler_state{conn = Conn}) ->
+handle_cast(ping, #echo_handler_state{conn = Conn, version = Version} = State) ->
     Xid = of_driver:gen_xid(Conn),
-    %% EchoData = "",
-    % XXX of_msg_lib:echo not implemented !?!?!!!
-    %% EchoRequest = of_driver:set_xid(of_msg_lib:echo(EchoData), Xid),
-    %% of_driver:send(Conn, EchoRequest),
+    io:format(".......... GOING TO PING .......... \n",[]),
+    EchoRequest = of_driver:set_xid(of_msg_lib:echo_request(Version, <<1,2,3,4,5,6,7>>),
+                                     Xid),
+    of_driver:send(Conn, EchoRequest),
     {noreply, State#echo_handler_state{xid = Xid}};
 handle_cast(_Msg, State) ->
     {noreply, State}.

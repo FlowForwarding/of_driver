@@ -83,7 +83,9 @@ sync_send(Connection, #ofp_message{} = Msg) ->
                        ok | {error, [ok | {error, Reason :: term()}]}.
 %% @doc
 send_list(Connection,Msgs) when is_list(Msgs) ->
-    lists:foreach(fun(Msg) -> gen_server:cast(Connection,{send,Msg}) end,Msgs).
+    lists:foreach(fun(Msg) -> 
+        gen_server:cast(Connection,{send,Msg}) end,
+     Msgs).
 
 -spec sync_send_list(Connection :: term(),Messages :: list(Msg::#ofp_message{})) -> 
                             {ok, [{ok, Reply :: #ofp_message{} | noreply}]} |
