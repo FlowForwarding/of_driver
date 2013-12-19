@@ -72,8 +72,7 @@ init([Socket]) ->
 handle_call({send,OfpMsg},_From,#?STATE{ switch_handler = SwitchHandler,
                                          protocol       = Protocol,
                                          socket         = Socket } = State) ->
-    {ok,EncodedMessage} = of_protocol:encode(OfpMsg),
-    ok = SwitchHandler:send(Protocol,Socket,EncodedMessage),  %% ok = of_driver_utils:send(Protocol,Socket,EncodedMessage),
+    ok = of_driver_utils:send(Protocol,Socket,OfpMsg),
     {reply,ok,State};
 handle_call(_Request, _From,State) ->
     {reply, ok, State}.
@@ -83,6 +82,11 @@ handle_cast(hello,#?STATE{ protocol = Protocol,
     Versions = of_driver_utils:conf_default(of_comaptible_versions, fun erlang:is_list/1, [3, 4]),
     {ok, HelloBin} = of_protocol:encode(of_driver_utils:create_hello(Versions)),
     ok = of_driver_utils:send(Protocol, Socket, HelloBin),
+    {noreply, State};
+handle_cast({send,OfpMsg},#?STATE{ switch_handler = SwitchHandler,
+                                   protocol       = Protocol,
+                                   socket         = Socket } = State) ->
+    ok = of_driver_utils:send(Protocol,Socket,OfpMsg),
     {noreply, State};
 handle_cast(_Req,State) ->
     {noreply, State}.
@@ -202,10 +206,13 @@ handle_message(#ofp_message{ version = Version,
                 {ok,AuxID} = of_driver_utils:get_aux_id(Version, Body),
                 handle_datapath(State#?STATE{ datapath_info = DatapathInfo, aux_id = AuxID })
         end,
-    {ok,HandlerState} = SwitchHandler:init(IpAddr,DatapathInfo,Capabilities,Version,self(),Opts),
+    {ok,HandlerState} = SwitchHandler:init(IpAddr,DatapathInfo,Body,Version,self(),Opts),
     NewState#?STATE{ handler_state = HandlerState };
 
 handle_message(Msg,#?STATE{ switch_handler = SwitchHandler } = #?STATE{ connection_init = true } = State) ->
+
+    io:format(" ........................ Received a message ........................\n\n "),
+
     SwitchHandler:handle_message(Msg),
     State.
 
@@ -225,7 +232,8 @@ handle_datapath(#?STATE{ datapath_info = DatapathInfo,
                          connection_init = true,
                          aux_id          = AuxID};
         _Else ->
-            close_of_connection(State,aux_conflict)
+            close_of_connection(State,aux_conflict),
+            State
     end.
 
 decide_on_version(SupportedVersions, #ofp_message{version = CtrlHighestVersion,
