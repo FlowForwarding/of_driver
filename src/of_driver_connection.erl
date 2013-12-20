@@ -106,18 +106,18 @@ handle_info({tcp, Socket, Data},#?STATE{ parser        = undefined,
     case of_protocol:decode(<<Buffer/binary, Data/binary>>) of
         {ok, #ofp_message{xid = Xid, body = #ofp_hello{}} = Hello, _Leftovers} ->
             case decide_on_version(Versions, Hello) of
+            %% TODO: !!! check that CONNECTION gets stored correctly.
+            %% and do something with Leftovers ... 
                 {failed, Reason} ->
                     handle_failed_negotiation(Xid, Reason, State);
-                Version ->
-                    %% TODO: !!! check that CONNECTION gets stored correctly.
-                    %% and do something with Leftovers ... 
+                Version = 3 -> %% of_msg_lib only currently supports V4... 
                     {ok, Parser} = ofp_parser:new(Version),
-                    {ok,FeaturesRequest} = of_driver_utils:create_features_request(Version),
-                    {ok, FeaturesBin} = of_protocol:encode(FeaturesRequest),
-                    %% TODO: use of_msg_lib
-                    %% {ok,FeaturesBin} = of_protocol:encode(of_msg_lib:get_features(4)), %% 
-                    ok = of_driver_utils:send(Protocol, Socket, FeaturesBin),
-                    {noreply, State#?STATE{parser = Parser, version = Version}}
+                    {ok,FeaturesBin} = of_protocol:encode(of_driver_utils:create_features_request(Version)),
+                    handle_features_reply(FeaturesBin,State#?STATE{ parser = Parser, version = Version });
+                Version ->
+                    {ok, Parser} = ofp_parser:new(Version),
+                    {ok,FeaturesBin} = of_protocol:encode(of_msg_lib:get_features(Version)),
+                    handle_features_reply(FeaturesBin,State#?STATE{ parser = Parser, version = Version })
             end;
         {error, binary_too_small} ->
             {noreply, State#?STATE{hello_buffer = <<Buffer/binary,
@@ -159,6 +159,11 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %%-----------------------------------------------------------------------------
+
+handle_features_reply(FeaturesBin,#?STATE{ socket = Socket, protocol = Protocol } = State) ->
+    ok = of_driver_utils:send(Protocol, Socket, FeaturesBin),
+    {noreply, State}.
+
 close_of_connection(State) ->
     close_of_connection(State,connection_terminated).
 
