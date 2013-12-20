@@ -212,10 +212,9 @@ handle_message(#ofp_message{ version = Version,
                                               aux_id        = AuxID })
         end,
 
-    {ok,HandlerPid,HandlerState} = SwitchHandler:init_handler(IpAddr,DatapathInfo,Body,Version,self(),Opts),
+    {ok,HandlerState} = SwitchHandler:init(IpAddr,DatapathInfo,Body,Version,self(),Opts),
 
-    NewState#?STATE{ handler_pid = HandlerPid,
-                     handler_state = HandlerState };
+    NewState#?STATE{ handler_state = HandlerState };
 
 handle_message(Msg,#?STATE{ connection_init = true,
                             switch_handler  = SwitchHandler,
