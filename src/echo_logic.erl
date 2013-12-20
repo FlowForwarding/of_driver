@@ -11,52 +11,72 @@
 
 -behaviour(gen_server).
 
--export([start_link/2]).
+-export([start_link/6]).
 
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
+-export([   
+        init/1,
+        handle_call/3,
+        handle_cast/2,
+        handle_info/2,
+        terminate/2,
+        code_change/3
+        ]).
 
--record(echo_handler_state, { version,
-                              conn,
-                              aux_conns = [],
-                              xid
-                            }).
+-define(STATE,echo_logic_state).
 
--define(SERVER, ?MODULE). 
+-include_lib("of_protocol/include/of_protocol.hrl").
 
-start_link(Version,Conn) ->
-    gen_server:start_link(?MODULE, [Version, Conn], []).
+-record(?STATE, { version,
+                  conn,
+                  aux_conns = [],
+                  xid,
+                  ip_address,
+                  datapath_id,
+                  features_reply,
+                  opts
+                }).
 
-init([Version, Conn]) ->
+start_link(IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts) ->
+    gen_server:start_link(?MODULE, [IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts], []).
+
+init([IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts]) ->
     gen_server:cast(self(), ping),
-    {ok, #echo_handler_state{version = Version, conn = Conn}}.
+    {ok, #?STATE{version        = Version, 
+                 conn           = Conn,
+                 ip_address     = IpAddr,
+                 datapath_id    = DatapathInfo,
+                 features_reply = FeaturesReply,
+                 opts           = Opts
+                }}.
 
+handle_call(state,_From,State) ->
+    {reply,{ok,State},State};
+handle_call({message, Msg},_From,State) ->
+    DecodedMsg = of_msg_lib:decode(Msg),
+    handle_message(self(),undefined,DecodedMsg, State),
+    {reply,{ok,State},State};
 handle_call(_Request, _From, State) ->
-    Reply = ok,
-    {reply, Reply, State}.
+    {reply, ok, State}.
 
-handle_cast({connect, AuxConn},
-                #echo_handler_state{aux_conns = AuxConns} = State) ->
-    {noreply, State#echo_handler_state{aux_conns =
-                                     [AuxConn | AuxConns]}};
-handle_cast({disconnect, AuxConn},#echo_handler_state{aux_conns = AuxConns} = State) ->
-    {noreply,State#echo_handler_state{aux_conns = lists:deleted(AuxConn, AuxConns)}};
-handle_cast(terminate,#echo_handler_state{aux_conns = AuxConns} = State) ->
+handle_cast({connect, AuxConn},#?STATE{aux_conns = AuxConns} = State) ->
+    {noreply, State#?STATE{aux_conns = [AuxConn | AuxConns]}};
+handle_cast({disconnect, AuxConn},#?STATE{aux_conns = AuxConns} = State) ->
+    {noreply,State#?STATE{aux_conns = lists:deleted(AuxConn, AuxConns)}};
+handle_cast(terminate,#?STATE{aux_conns = AuxConns} = State) ->
     %% assumes of_driver closes auxiliary connections automatically and does not
     %% call handle_disconnect.
     {stop, no_connection,
-        State#echo_handler_state{conn = undefined, aux_conns = []}};
+        State#?STATE{conn = undefined, aux_conns = []}};
 handle_cast({message, Msg}, State) ->
     DecodedMsg = of_msg_lib:decode(Msg),
-    handle_message(undefined,undefined,DecodedMsg, State),
+    handle_message(self(),undefined,DecodedMsg, State),
     {noreply, State};
-handle_cast(ping, #echo_handler_state{conn = Conn, version = Version} = State) ->
+handle_cast(ping, #?STATE{conn = Conn, version = Version} = State) ->
     Xid = of_driver:gen_xid(Conn),
     io:format(".......... GOING TO PING .......... \n",[]),
-    EchoRequest = of_driver:set_xid(of_msg_lib:echo_request(Version, <<1,2,3,4,5,6,7>>),
-                                     Xid),
+    {ok,EchoRequest} = of_driver:set_xid(of_msg_lib:echo_request(Version, <<1,2,3,4,5,6,7>>),Xid),
     of_driver:send(Conn, EchoRequest),
-    {noreply, State#echo_handler_state{xid = Xid}};
+    {noreply, State#?STATE{xid = Xid}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -70,9 +90,8 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 
-handle_message(Pid, Conn, {echo_request, Xid, Properties},#echo_handler_state{xid = Xid} = State) ->
-    % echo received!
+handle_message(Pid, Conn, #ofp_message{ type = echo_reply } = Msg,#?STATE{xid = Xid} = State) ->
+    io:format("Message received from Swtich : ~p ......................... \n\n\n",[Msg]),
     {ok, State};
-handle_message(Pid, Conn, _Msg, State) ->
-    % ignore anything else
+handle_message(Pid, Conn, Msg, State) ->
     {ok, State}.

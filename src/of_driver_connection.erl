@@ -39,7 +39,8 @@
                  aux_id              :: integer(),
                  datapath_info       :: { DatapathId :: integer(), DatapathMac :: term() },
                  connection_init     :: boolean(),
-                 handler_state       :: record()
+                 handler_state       :: record(),
+                 handler_pid         :: pid()
                }).
 
 %%------------------------------------------------------------------
@@ -66,6 +67,7 @@ init([Socket]) ->
                           address             = Address
                         }};
         false ->
+            terminate_connection(Socket),
             {stop,{ip_address_not_allowed,{Address, Port}}}
     end.
 
@@ -86,7 +88,8 @@ handle_cast(hello,#?STATE{ protocol = Protocol,
 handle_cast({send,OfpMsg},#?STATE{ switch_handler = SwitchHandler,
                                    protocol       = Protocol,
                                    socket         = Socket } = State) ->
-    ok = of_driver_utils:send(Protocol,Socket,OfpMsg),
+    {ok,EncodedMessage} = of_protocol:encode(OfpMsg),
+    ok = of_driver_utils:send(Protocol,Socket,EncodedMessage),
     {noreply, State};
 handle_cast(_Req,State) ->
     {noreply, State}.
@@ -191,30 +194,30 @@ handle_message(#ofp_message{ version = Version,
                                                        switch_handler_opts = Opts,
                                                        address             = IpAddr
                                                      } = State) ->
-
-    io:format("Body : ~p................................\n",[Body]),
-
     % Intercept features_reply for our initial features_request
     {ok,DatapathInfo} = of_driver_utils:get_datapath_info(Version, Body),
     {ok,Capabilities} = of_driver_utils:get_capabilities(Version, Body),
-
     NewState = 
         case Version of
             3 ->
                 State#?STATE{datapath_info = DatapathInfo};
             4 ->
                 {ok,AuxID} = of_driver_utils:get_aux_id(Version, Body),
-                handle_datapath(State#?STATE{ datapath_info = DatapathInfo, aux_id = AuxID })
+                handle_datapath(State#?STATE{ datapath_info = DatapathInfo, 
+                                              aux_id        = AuxID })
         end,
-    {ok,HandlerState} = SwitchHandler:init(IpAddr,DatapathInfo,Body,Version,self(),Opts),
-    NewState#?STATE{ handler_state = HandlerState };
 
-handle_message(Msg,#?STATE{ switch_handler = SwitchHandler } = #?STATE{ connection_init = true } = State) ->
+    {ok,HandlerPid,HandlerState} = SwitchHandler:init_handler(IpAddr,DatapathInfo,Body,Version,self(),Opts),
 
-    io:format(" ........................ Received a message ........................\n\n "),
+    NewState#?STATE{ handler_pid = HandlerPid,
+                     handler_state = HandlerState };
 
-    SwitchHandler:handle_message(Msg),
-    State.
+handle_message(Msg,#?STATE{ connection_init = true,
+                            switch_handler  = SwitchHandler,
+                            handler_pid     = HandlerPid
+                           } = State) ->
+    {ok,HandlerState} = SwitchHandler:handle_message(Msg,HandlerPid),
+    State#?STATE{handler_state = HandlerState}.
 
 %% Internal Functions
 
@@ -222,12 +225,15 @@ handle_datapath(#?STATE{ datapath_info = DatapathInfo,
                          aux_id        = AuxID } = State) ->
     case of_driver_db:lookup_datapath_id(DatapathInfo) of
         [] when AuxID =:= 0 ->
-            %% {ok, ChannelPID} = of_driver_channel_sup:start_child(DatapathInfo),
+            %% %% TODO : implement
+            %% handle connect
             of_driver_db:insert_datapath_id(DatapathInfo,self()),
             State#?STATE{conn_role       = main,
                          connection_init = true};
         [Entry] when AuxID =/= 0 ->
             of_driver_db:add_aux_id(Entry,DatapathInfo,{AuxID, self()}),
+            %% TODO : implement
+            %% SwitchHandler:handle_connect()
             State#?STATE{conn_role       = aux,
                          connection_init = true,
                          aux_id          = AuxID};

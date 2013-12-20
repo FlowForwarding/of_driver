@@ -8,18 +8,16 @@
 -module(echo_handler).
 -copyright("2013, Erlang Solutions Ltd.").
 
--record(echo_handler_state, { ip_address,
-                              datapath_id,
-                              features_reply,
-                              version,
-                              logic_pid,
-                              opts
-                            }).
+-define(STATE,echo_handler_state).
 
--export([   setup/0,
-            setup/1,
-            init/6
+-export([setup/0,
+         setup/1,
+         init_handler/6,
+         handle_connect/2,
+         handle_message/2
         ]).
+
+-include_lib("of_protocol/include/of_protocol.hrl").
 
 setup() ->
     SwitchIP = {10,151,1,65},
@@ -27,29 +25,33 @@ setup() ->
 
 setup(SwitchIP) ->
     ok = of_driver:grant_ipaddr(SwitchIP, echo_handler, []).
+
+state(Pid) ->
+  gen_server:call(Pid,state).
  
-init(IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts) ->
-    {ok, Pid} = echo_logic:start_link(Version, Conn),
-    {ok,#echo_handler_state{  ip_address    = IpAddr,
-                              datapath_id   = DatapathInfo,
-                              features_reply= FeaturesReply,
-                              version       = Version,
-                              logic_pid     = Pid,
-                              opts          = Opts
-    }}.
-
-handle_connect(NewAuxConn, #echo_handler_state{logic_pid = Pid} = State) ->
-    ok = gen_server:cast(Pid, {connect, NewAuxConn}),
-    {ok, State}.
-
-handle_disconnect(AuxConn, #echo_handler_state{logic_pid = Pid} = State) ->
-    ok = gen_server:cast(Pid, {disconnect, AuxConn}),
-    {ok, State}.
-
-terminate(#echo_handler_state{logic_pid = Pid} = State) ->
-    ok = gen_server:cast(Pid, terminate),
+%% TODO: these calls probably have to be call, and then return the updated state to the of_driver_connection.
+handle_connect(NewAuxConn,LogicPid) ->
+    ok = gen_server:cast(LogicPid, {connect, NewAuxConn}),
     ok.
 
-handle_message(_Conn, Msg, #echo_handler_state{logic_pid = Pid} = State) ->
-    ok = gen_server:cast(Pid, {message, Msg}),
-    {ok, State}.
+handle_disconnect(AuxConn, LogicPid) ->
+    ok = gen_server:cast(LogicPid, {disconnect, AuxConn}),
+    ok.
+
+terminate(LogicPid) ->
+    ok = gen_server:cast(LogicPid, terminate),
+    ok.
+
+handle_message(#ofp_message{ type = echo_reply } = Msg,LogicPid) ->
+  {ok,NewState} = gen_server:call(LogicPid, {message, Msg}),
+  timer:sleep(1000),
+  ok = gen_server:cast(LogicPid, ping),
+  {ok,NewState};
+handle_message(Msg,LogicPid) -> %% {ok,_NewState}
+  {ok,_NewState} = gen_server:call(LogicPid, {message, Msg}).
+
+%%------------------------------------------------------------------------------
+init_handler(IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts) ->
+    {ok, Pid} = echo_logic:start_link(IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts),
+    {ok,HandlerState} = gen_server:call(Pid,state),
+    {ok,Pid,HandlerState}.

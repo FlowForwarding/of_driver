@@ -108,9 +108,8 @@ close_ipaddr(_IpAddr) ->
 
 -spec set_xid(Msg :: #ofp_message{}, Xid :: integer()) -> ok.
 %% @doc
-set_xid(_Msg = #ofp_message{}, _Xid) -> 
-    %% implement.
-    _NewMsg = #ofp_message{}.
+set_xid(#ofp_message{} = Msg, Xid) -> 
+    {ok,Msg#ofp_message{ xid = Xid}}.
 
 -spec gen_xid(Connection :: term()) -> ok.
 %% @doc
