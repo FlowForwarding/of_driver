@@ -23,6 +23,7 @@
 
 -include_lib("of_protocol/include/of_protocol.hrl").
 -include_lib("of_driver/include/of_driver_acl.hrl").
+-include_lib("of_driver/include/of_driver_logger.hrl").
 
 -record(?STATE,{ switch_handler      :: atom(),
                  switch_handler_opts :: list(),
@@ -39,8 +40,7 @@
                  aux_id              :: integer(),
                  datapath_info       :: { DatapathId :: integer(), DatapathMac :: term() },
                  connection_init     :: boolean(),
-                 handler_state       :: record(),
-                 handler_pid         :: pid()
+                 handler_state       :: term()
                }).
 
 %%------------------------------------------------------------------
@@ -53,7 +53,7 @@ init([Socket]) ->
     case of_driver_db:allowed(Address) of
         {true, #?ACL_TBL{switch_handler = SwitchHandler,
                          opts           = Opts } = _Entry} ->
-            Versions = of_driver_utils:conf_default(of_comaptible_versions, fun erlang:is_list/1, [3, 4]),
+            Versions = of_driver_utils:conf_default(of_compatible_versions, fun erlang:is_list/1, [3, 4]),
             Protocol = tcp,
             of_driver_utils:setopts(Protocol, Socket, [{active, once}]),
             ok = gen_server:cast(self(),hello),
@@ -68,11 +68,13 @@ init([Socket]) ->
                         }};
         false ->
             terminate_connection(Socket),
-            {stop,{ip_address_not_allowed,{Address, Port}}}
+            ?WARNING("Rejecting connection - "
+                    "IP Address not allowed ipaddr(~p) port(~p)~n",
+                                                        [Address, Port]),
+            ignore
     end.
 
-handle_call({send,OfpMsg},_From,#?STATE{ switch_handler = SwitchHandler,
-                                         protocol       = Protocol,
+handle_call({send,OfpMsg},_From,#?STATE{ protocol       = Protocol,
                                          socket         = Socket } = State) ->
     ok = of_driver_utils:send(Protocol,Socket,OfpMsg),
     {reply,ok,State};
@@ -81,12 +83,11 @@ handle_call(_Request, _From,State) ->
 
 handle_cast(hello,#?STATE{ protocol = Protocol,
                            socket   = Socket } = State) ->
-    Versions = of_driver_utils:conf_default(of_comaptible_versions, fun erlang:is_list/1, [3, 4]),
+    Versions = of_driver_utils:conf_default(of_compatible_versions, fun erlang:is_list/1, [3, 4]),
     {ok, HelloBin} = of_protocol:encode(of_driver_utils:create_hello(Versions)),
     ok = of_driver_utils:send(Protocol, Socket, HelloBin),
     {noreply, State};
-handle_cast({send,OfpMsg},#?STATE{ switch_handler = SwitchHandler,
-                                   protocol       = Protocol,
+handle_cast({send,OfpMsg},#?STATE{ protocol       = Protocol,
                                    socket         = Socket } = State) ->
     {ok,EncodedMessage} = of_protocol:encode(OfpMsg),
     ok = of_driver_utils:send(Protocol,Socket,EncodedMessage),
@@ -143,6 +144,7 @@ handle_info({tcp, Socket, Data},#?STATE{ parser       = Parser,
                     {stop, Reason, NewState}
             end;
         _Else ->
+            % XXX call appropriate callback
             close_of_connection(State)
     end;
 
@@ -150,6 +152,7 @@ handle_info({tcp_closed,_Socket},State) ->
     close_of_connection(State);
 
 handle_info({tcp_error, _Socket, _Reason},State) ->
+    % XXX call appropriate callback
     close_of_connection(State).
 
 terminate(_Reason,_State) ->
@@ -178,7 +181,9 @@ close_of_connection(#?STATE{ socket        = Socket,
             of_driver_db:remove_datapath_aux_id(DatapathInfo, AuxID) 
     end,
     ok = terminate_connection(Socket),
-    {stop, Reason, State}.
+    ?WARNING("connection terminated: datapathid(~p) aux_id(~p) reason(~p)~n",
+                            [DatapathInfo, AuxID, Reason]),
+    {stop, normal, State}.
 
 %%-----------------------------------------------------------------------------
 
@@ -192,16 +197,16 @@ do_handle_message([Message|Rest],NewState) ->
             do_handle_message(Rest,NextState)
     end.
 
-handle_message(#ofp_message{ version = Version,
-                             type    = features_reply,
-                             body    = Body}, #?STATE{ connection_init     = false,
-                                                       switch_handler      = SwitchHandler,
-                                                       switch_handler_opts = Opts,
-                                                       address             = IpAddr
-                                                     } = State) ->
+handle_message(#ofp_message{version = Version,
+                            type    = features_reply,
+                            body    = Body},
+                            #?STATE{connection_init     = false,
+                                    switch_handler      = SwitchHandler,
+                                    switch_handler_opts = Opts,
+                                    address             = IpAddr
+                                                                } = State) ->
     % Intercept features_reply for our initial features_request
     {ok,DatapathInfo} = of_driver_utils:get_datapath_info(Version, Body),
-    {ok,Capabilities} = of_driver_utils:get_capabilities(Version, Body),
     NewState = 
         case Version of
             3 ->
@@ -212,16 +217,16 @@ handle_message(#ofp_message{ version = Version,
                                               aux_id        = AuxID })
         end,
 
-    {ok,HandlerState} = SwitchHandler:init(IpAddr,DatapathInfo,Body,Version,self(),Opts),
-
+    %% XXX are we aux connection or main connection?  Call appropriate callback
+    {ok, HandlerState} = SwitchHandler:init(
+                            IpAddr, DatapathInfo, Body, Version, self(), Opts),
     NewState#?STATE{ handler_state = HandlerState };
-
-handle_message(Msg,#?STATE{ connection_init = true,
-                            switch_handler  = SwitchHandler,
-                            handler_pid     = HandlerPid
-                           } = State) ->
-    {ok,HandlerState} = SwitchHandler:handle_message(Msg,HandlerPid),
-    State#?STATE{handler_state = HandlerState}.
+handle_message(Msg, #?STATE{connection_init   = true,
+                            switch_handler    = SwitchHandler,
+                            handler_state     = HandlerState
+                                                               } = State) ->
+    {ok,NewHandlerState} = SwitchHandler:handle_message(Msg,HandlerState),
+    State#?STATE{handler_state = NewHandlerState}.
 
 %% Internal Functions
 
@@ -316,4 +321,5 @@ create_error(4, Type, Code) ->
     ofp_client_v4:create_error(Type, Code).
 
 terminate_connection(Socket) ->
+    % XXX call appropriate callback
     of_driver_utils:close(tcp, Socket).

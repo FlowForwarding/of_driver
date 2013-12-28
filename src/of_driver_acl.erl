@@ -12,7 +12,6 @@
 
 -export([ create_table/0,
           create_table/1,
-          write/1,
           write/3,
           read/1,
           delete/1,
@@ -32,10 +31,6 @@ table_exists(Tbl, NodeList) ->
         {aborted,{already_exists,Tbl}} -> 
             ok
     end.
-
-write(Address) ->
-    DefaultSwitchHandler = of_driver_utils:conf_default(default_callback_mod, fun erlang:is_atom/1, ofs_handler_driver),
-    write(Address, DefaultSwitchHandler, []).
 
 write(Address, SwitchHandler, Opts) when is_list(Address) ->
     case string:tokens(Address,".:") of
@@ -64,7 +59,7 @@ write_valid(Address, SwitchHandler, Opts) ->
     ok = mnesia:dirty_write(#?ACL_TBL{
                                 ip_address = Address,
                                 switch_handler = SwitchHandler,
-                                opts=Opts}).
+                                opts = Opts}).
 
 clear() ->
     {atomic,ok} = mnesia:clear_table(?ACL_TBL).

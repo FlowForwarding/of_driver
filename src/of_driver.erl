@@ -31,14 +31,19 @@
 -spec grant_ipaddr(IpAddr :: inet:ip_address()) -> ok | {error, einval}.
 %% @doc
 grant_ipaddr(IpAddr) ->
-    of_driver_db:grant_ipaddr(IpAddr).
+    % XXX might be better to apply defaults on read so old defaults are
+    % not stored in the database
+    CallbackMod = of_driver_utils:conf_default(callback_module,
+                            fun erlang:is_atom/1, of_driver_default_handler),
+    Opts = of_driver_utils:conf_default(init_opt, []),
+    of_driver_db:grant_ipaddr(IpAddr, CallbackMod, Opts).
 
 -spec grant_ipaddr(IpAddr        :: inet:ip_address(), 
                    SwitchHandler :: term(),
                    Opts          :: list()) -> ok | {error, einval}.
 %% @doc
 grant_ipaddr(IpAddr, SwitchHandler, Opts) ->
-    of_driver_db:grant_ipaddr(IpAddr,SwitchHandler,Opts).
+    of_driver_db:grant_ipaddr(IpAddr, SwitchHandler, Opts).
 
 -spec revoke_ipaddr(IpAddr :: inet:ip_address()) -> ok | {error, einval}.
 %% @doc

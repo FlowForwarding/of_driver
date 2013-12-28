@@ -18,7 +18,6 @@
 
 -export([ clear_acl_list/0,
           allowed/1,
-          grant_ipaddr/1,
           grant_ipaddr/3,
           revoke_ipaddr/1,
           get_allowed_ipaddrs/0
@@ -66,10 +65,6 @@ clear_acl_list() ->
 -spec allowed(Address :: inet:ip_address()) -> boolean().
 allowed(Address) ->
     of_driver_acl:read(Address).
-
--spec grant_ipaddr(IpAddr        :: inet:ip_address()) -> ok | {error, einval}.
-grant_ipaddr(IpAddr) ->
-    of_driver_acl:write(IpAddr).
 
 -spec grant_ipaddr(IpAddr        :: inet:ip_address(), 
                    SwitchHandler :: term(),

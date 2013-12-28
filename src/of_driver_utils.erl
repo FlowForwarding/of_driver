@@ -16,12 +16,13 @@
          connect/3,
          opts/1
         ]).
--export([conf_default/3,
+-export([conf_default/2,
+         conf_default/3,
          create_hello/1,
          create_features_request/1,
          get_datapath_info/2,
-        get_aux_id/2,
-        get_capabilities/2
+         get_aux_id/2,
+         get_capabilities/2
         ]).
 -export([list_connections/0,
          list_connections/1,
@@ -48,8 +49,11 @@ mod(4) ->
 mod(_) ->
     {error, bad_version}.
 
+conf_default(Entry, Default) ->
+    conf_default(Entry, fun any/1, Default).
+
 conf_default(Entry, GuardFun, Default) ->
-    case application:get_env(of_driver,Entry) of
+    case application:get_env(of_driver, Entry) of
 	{ok, Value} -> 
             case GuardFun(Value) of
                 true -> Value;
@@ -58,6 +62,8 @@ conf_default(Entry, GuardFun, Default) ->
 	_ -> 
             Default
     end.
+
+any(_) -> true.
 
 create_hello(Versions) when is_integer(Versions) ->
     create_hello([Versions]);
