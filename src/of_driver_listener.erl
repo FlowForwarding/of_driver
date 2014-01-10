@@ -39,18 +39,15 @@ init(_) ->
     {ok, #?STATE{lsock = LSocket}}.
 
 handle_call(_Msg, _From, State) ->
-    %% io:format("... [~p]  !!! Unknown handle_info ~p !!!...~n",[?MODULE,Msg]),
     {reply, ok, State}.
 
 handle_cast(startup, #?STATE{lsock = LSocket} = State) ->
     spawn_link(?MODULE, accept, [LSocket]),
     {noreply, State};
 handle_cast(_Msg, State) ->
-    %%io:format("... [~p] !!! Unknown handle_cast ~p !!!...~n",[?MODULE,Msg]),
     {noreply, State}.
 
 handle_info(_Msg,State) ->
-    %% io:format("... [~p] !!! Unknown handle_info ~p !!!...~n",[?MODULE,Msg]),
     {noreply,State}.
 
 terminate(_Reason, _State) ->
@@ -58,29 +55,22 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
 %%-----------------------------------------------------------------------------
 
 accept(ListenSocket) ->
-    %% io:format("... [~p] accept(ListenSocket) \n",[?MODULE]),
     case gen_tcp:accept(ListenSocket) of
         {ok, Socket} ->
             case of_driver_connection_sup:start_child(Socket) of
                 {ok, ConnCtrlPID} ->
                     case gen_tcp:controlling_process(Socket, ConnCtrlPID) of
-                        ok -> ok;
+                        ok               -> ok;
                         {error, _Reason} -> ok
-                            % gets {error, closed} if IP address is not allowed
                     end;
                 {error,_Reason} ->
                     ok
             end,
             accept(ListenSocket);
         _Error ->
-            %% io:format("... [~p] Accept Error : ~p~n",[?MODULE,Error]),
             accept(ListenSocket)
     end.
-
-%%-----------------------------------------------------------------------------
-
-
-%% TODO: add logging....

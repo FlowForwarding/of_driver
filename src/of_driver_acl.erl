@@ -15,7 +15,8 @@
           write/3,
           read/1,
           delete/1,
-          all/0
+          all/0,
+          clear/0
         ]).
 
 create_table() ->
@@ -73,10 +74,14 @@ read(Address) when is_tuple(Address) ->
                 [E2] -> {true, E2};
                 []   -> false
             end
-    end.
+    end;
+read(_) ->
+    {error,einval}.
 
-delete(Address) when is_tuple(Address) or Address =:= any  ->
-    ok = mnesia:dirty_delete(?ACL_TBL, Address).
+delete(Address) when ( is_tuple(Address) ) or ( Address =:= any ) ->
+    ok = mnesia:dirty_delete(?ACL_TBL, Address);
+delete(_) ->
+    {error,einval}.
 
 all() ->
     {atomic, List} = mnesia:transaction(
@@ -84,7 +89,7 @@ all() ->
     List.
 
 all_tbl('$end_of_table', Result) ->
-    Result;
+    lists:flatten( lists:reverse(Result) );
 all_tbl(Key, Result) ->
     all_tbl(mnesia:next(?ACL_TBL, Key), [mnesia:read(?ACL_TBL, Key) | Result]).
 

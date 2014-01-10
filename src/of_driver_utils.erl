@@ -18,6 +18,7 @@
         ]).
 -export([conf_default/2,
          conf_default/3,
+         proplist_default/3,
          create_hello/1,
          create_features_request/1,
          get_datapath_info/2,
@@ -61,6 +62,14 @@ conf_default(Entry, GuardFun, Default) ->
             end;
 	_ -> 
             Default
+    end.
+
+proplist_default(Prop,List,Default) ->
+    case lists:keyfind(Prop, 1, List) of
+        false ->
+            Default;
+        {Prop,Value} ->
+            Value
     end.
 
 any(_) -> true.

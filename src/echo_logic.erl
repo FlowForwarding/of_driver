@@ -25,6 +25,7 @@
 -define(STATE,echo_logic_state).
 
 -include_lib("of_protocol/include/of_protocol.hrl").
+-include_lib("of_driver/include/of_driver_logger.hrl").
 
 -record(?STATE, { version,
                   conn,
@@ -40,7 +41,12 @@ start_link(IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts) ->
     gen_server:start_link(?MODULE, [IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts], []).
 
 init([IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts]) ->
-    gen_server:cast(self(), ping),
+    case of_driver_utils:proplist_default(enable_ping, Opts, false) of
+        true ->
+            gen_server:cast(self(), ping);
+        false ->
+            ok
+    end,
     {ok, #?STATE{version        = Version, 
                  conn           = Conn,
                  ip_address     = IpAddr,
@@ -71,9 +77,22 @@ handle_cast({message, Msg}, State) ->
     DecodedMsg = of_msg_lib:decode(Msg),
     handle_message(self(),undefined,DecodedMsg, State),
     {noreply, State};
-handle_cast(ping, #?STATE{conn = Conn, version = Version} = State) ->
-    Xid = of_driver:gen_xid(Conn),
-    io:format(".......... GOING TO PING .......... \n",[]),
+handle_cast(ping, #?STATE{conn    = Conn, 
+                          version = Version, 
+                          opts    = Opts} = State) ->
+    case of_driver_utils:proplist_default(enable_ping, Opts, false) of
+        true ->
+            Timeout = of_driver_utils:proplist_default(ping_timeout, Opts, 10000),
+            {ok,_TRef} = timer:apply_after(Timeout, gen_server, cast, [self(),do_ping]),
+            {noreply,State};
+        false ->
+            {noreply,State}
+    end;
+handle_cast(do_ping, #?STATE{conn    = Conn, 
+                          version = Version, 
+                          opts    = Opts} = State) ->
+    ?INFO(" sending ping_request to switch ... \n"),
+    {ok,Xid} = of_driver:gen_xid(Conn),
     {ok,EchoRequest} = of_driver:set_xid(of_msg_lib:echo_request(Version, <<1,2,3,4,5,6,7>>),Xid),
     of_driver:send(Conn, EchoRequest),
     {noreply, State#?STATE{xid = Xid}};
@@ -91,7 +110,6 @@ code_change(_OldVsn, State, _Extra) ->
 
 
 handle_message(Pid, Conn, #ofp_message{ type = echo_reply } = Msg,#?STATE{xid = Xid} = State) ->
-    io:format("Message received from Swtich : ~p ......................... \n\n\n",[Msg]),
     {ok, State};
 handle_message(Pid, Conn, Msg, State) ->
     {ok, State}.

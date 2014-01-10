@@ -14,9 +14,10 @@
 
 start(_StartType, _StartArgs) ->
     of_driver_db:install(),
+    ok = lager:start(),
     case of_driver_sup:start_link() of
-	{ok, Pid} -> {ok, Pid};
-	Error     -> Error
+		{ok, Pid} -> {ok, Pid};
+		Error     -> Error
     end.
 
 stop(_State) ->
