@@ -13,16 +13,19 @@
 ]).
 
 -spec insert_datapath_id(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, ConnPID :: pid()) -> boolean().
+% @doc
 insert_datapath_id(DatapathInfo, ConnPID) ->
     ets:insert_new(?DATAPATH_TBL,                          
                     {DatapathInfo, [{main,ConnPID}]}
                   ).
 
 -spec remove_datapath_id(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }) -> boolean().
+% @doc
 remove_datapath_id(DatapathInfo) ->
     ets:delete(?DATAPATH_TBL, DatapathInfo).
 
 -spec remove_datapath_aux_id(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, AuxID :: integer()) -> boolean().
+% @doc
 remove_datapath_aux_id(DatapathInfo, AuxID) ->
     case lookup_datapath_id(DatapathInfo) of
         []      -> false;
@@ -30,6 +33,7 @@ remove_datapath_aux_id(DatapathInfo, AuxID) ->
     end.
 
 -spec remove_aux_id(Entry :: tuple(), DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, AuxID :: integer()) -> boolean().
+% @doc
 remove_aux_id(Entry,DatapathInfo, AuxID) ->
     Pos=2,
     CurrentAuxs = element(Pos,Entry),
@@ -37,6 +41,7 @@ remove_aux_id(Entry,DatapathInfo, AuxID) ->
     ets:update_element(?DATAPATH_TBL, DatapathInfo, [{Pos,Updated}]).
 
 -spec add_aux_id(Entry :: tuple(), DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, AuxID :: integer()) -> boolean().
+% @doc
 add_aux_id(Entry,DatapathInfo, Aux) ->
     Pos=2,
     CurrentAuxs = element(Pos, Entry),
@@ -44,5 +49,6 @@ add_aux_id(Entry,DatapathInfo, Aux) ->
     ets:update_element(?DATAPATH_TBL, DatapathInfo, [{Pos, Updated}]).
         
 -spec lookup_datapath_id(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }) -> list().
+% @doc
 lookup_datapath_id(DatapathInfo) ->
     ets:lookup(?DATAPATH_TBL,DatapathInfo).

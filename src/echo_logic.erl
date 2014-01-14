@@ -82,9 +82,7 @@ handle_cast({message, Msg}, State) ->
     DecodedMsg = of_msg_lib:decode(Msg),
     handle_message(self(),undefined,DecodedMsg, State),
     {noreply, State};
-handle_cast(ping, #?STATE{conn    = Conn, 
-                          version = Version, 
-                          opts    = Opts} = State) ->
+handle_cast(ping, #?STATE{opts = Opts} = State) ->
     case of_driver_utils:proplist_default(enable_ping, Opts, false) of
         true ->
             Timeout = of_driver_utils:proplist_default(ping_timeout, Opts, 10000),
@@ -94,15 +92,14 @@ handle_cast(ping, #?STATE{conn    = Conn,
             {noreply,State}
     end;
 handle_cast(do_ping, #?STATE{conn    = Conn, 
-                          version = Version, 
-                          opts    = Opts} = State) ->
+                             version = Version } = State) ->
     ?INFO(" sending ping_request to switch from handler (~p) ... \n",[self()]),
     {ok,Xid} = of_driver:gen_xid(Conn),
     {ok,EchoRequest} = of_driver:set_xid(of_msg_lib:echo_request(Version, <<1,2,3,4,5,6,7>>),Xid),
     of_driver:send(Conn, EchoRequest),
     gen_server:cast(self(),ping),
     {noreply, State#?STATE{xid = Xid}};
-handle_cast(close_connection,#?STATE{ loop_ref = TRef, aux_conns = AuxConns, opts = Opts } = State) ->
+handle_cast(close_connection,#?STATE{ loop_ref = TRef, opts = Opts } = State) ->
     case of_driver_utils:proplist_default(enable_ping, Opts, false) of
         true ->
             {ok, cancel} = timer:cancel(TRef);
@@ -123,8 +120,8 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 
-handle_message(Pid, Conn, #ofp_message{ type = echo_reply } = Msg,#?STATE{xid = Xid} = State) ->
+handle_message(_Pid, _Conn, #ofp_message{ type = echo_reply } = _Msg, #?STATE{xid = _Xid} = State) ->
     ?INFO(" handling ping_reply from switch ... \n"),
     {ok, State};
-handle_message(Pid, Conn, Msg, State) ->
+handle_message(_Pid, _Conn, _Msg, State) ->
     {ok, State}.

@@ -11,10 +11,13 @@
 -define(STATE,echo_handler_state).
 
 -export([setup/1,
+         state/1,
          init/6,
          init_handler/6,
          handle_connect/4,
-         handle_message/2
+         handle_disconnect/2,
+         handle_message/2,
+         terminate/1
         ]).
 
 -include_lib("of_protocol/include/of_protocol.hrl").

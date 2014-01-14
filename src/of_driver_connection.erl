@@ -213,8 +213,7 @@ handle_message(#ofp_message{version = Version,
                             #?STATE{connection_init     = false,
                                     switch_handler      = SwitchHandler,
                                     switch_handler_opts = Opts,
-                                    address             = IpAddr,
-                                    handler_pid         = MainHandlerPid } = State) ->
+                                    address             = IpAddr} = State) ->
     % Intercept features_reply for our initial features_request
     {ok,DatapathInfo} = of_driver_utils:get_datapath_info(Version, Body),
     NewState = 
@@ -227,7 +226,7 @@ handle_message(#ofp_message{version = Version,
                                               aux_id        = AuxID })
         end,
     %% XXX are we aux connection or main connection?  Call appropriate callback
-    {ok, HandlerPid, HandlerState} = SwitchHandler:init(IpAddr, DatapathInfo, Body, Version, self(), Opts),
+    {ok, HandlerPid, _HandlerState} = SwitchHandler:init(IpAddr, DatapathInfo, Body, Version, self(), Opts),
     NewHandlerState = SwitchHandler:handle_connect(HandlerPid,self(),NewState#?STATE.conn_role,NewState#?STATE.aux_id),
     NewState#?STATE{ handler_pid   = HandlerPid,
                      handler_state = NewHandlerState };
@@ -240,17 +239,13 @@ handle_message(Msg, #?STATE{connection_init = true,
 %% Internal Functions
 
 handle_datapath(#?STATE{ datapath_info  = DatapathInfo,
-                         aux_id         = AuxID,
-                         handler_pid    = HandlerPid,
-                         switch_handler = SwitchHandler } = State) ->
+                         aux_id         = AuxID} = State) ->
     case of_driver_db:lookup_datapath_id(DatapathInfo) of
         [] when AuxID =:= 0 ->
             of_driver_db:insert_datapath_id(DatapathInfo,self()),
-            ConnRole = main,            
             State#?STATE{conn_role       = main,
                          connection_init = true};
         [Entry] when AuxID =/= 0 ->
-            ConnRole = aux,
             of_driver_db:add_aux_id(Entry,DatapathInfo,{AuxID, self()}),
             State#?STATE{conn_role       = aux,
                          connection_init = true,

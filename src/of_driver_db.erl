@@ -115,15 +115,10 @@ remove_datapath_id(DatapathInfo) ->
 remove_datapath_aux_id(DatapathInfo, AuxID) ->
   of_driver_datapath:remove_datapath_aux_id(DatapathInfo, AuxID).
 
--spec remove_aux_id(Entry :: tuple(), DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, AuxID :: integer()) -> boolean().
-%% @doc
-remove_aux_id(Entry,DatapathInfo, AuxID) ->
-  of_driver_datapath:remove_aux_id(Entry,DatapathInfo, AuxID).
-
 -spec add_aux_id(Entry :: tuple(), DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, AuxID :: integer()) -> boolean().
 %% @doc
 add_aux_id(Entry,DatapathInfo, Aux) ->
-  of_driver_datapath:add_aux_id(Entry,DatapathInfo, Aux).
+  of_driver_datapath:add_aux_id(Entry, DatapathInfo, Aux).
         
 -spec lookup_datapath_id(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }) -> list().
 %% @doc
