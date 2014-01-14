@@ -9,27 +9,29 @@
 -copyright("2013, Erlang Solutions Ltd.").
 
 -include_lib("of_driver/include/of_driver.hrl").
--include_lib("of_driver/include/of_driver_acl.hrl").
+
 
 %% DB API to seperate DB infrastructure from LOOM.
 
 -export([ install/0
         ]).
-
 -export([ clear_acl_list/0,
           allowed/1,
           grant_ipaddr/3,
           revoke_ipaddr/1,
           get_allowed_ipaddrs/0
         ]).
-
 -export([ insert_datapath_id/2,
+          remove_datapath_id/3,
           remove_datapath_id/1,
           remove_datapath_aux_id/2,
           lookup_datapath_id/1,
           add_aux_id/3
         ]).
-
+-export([ insert_switch_connection/3,
+          remove_swtich_connection/2,
+          lookup_connection_pid/1
+        ]).
 
 %%--- Provisioning -----------------------------------------------------------
 
@@ -48,71 +50,107 @@ install_try() ->
     application:start(mnesia),
     ok = of_driver_acl:create_table([node()]),
     ok = mnesia:wait_for_tables([of_driver_acl],infinity),
-    case ets:info(?DATAPATH_TBL) of
-        undefined ->
-            ?DATAPATH_TBL = ets:new(?DATAPATH_TBL,
-                                    [ordered_set, public, named_table]),
-	    ok;
-        _Options ->
-            ok
+    lists:foreach(fun(Tbl) -> install_try_ets(Tbl) end,
+                  [?DATAPATH_TBL,?SWITCH_CONN_TBL]).
+
+install_try_ets(Tbl) ->
+  install_try_ets(Tbl,[ordered_set, public, named_table]).
+
+install_try_ets(Tbl,TblOpts) ->
+    case ets:info(Tbl) of
+        undefined           -> Tbl = ets:new(Tbl,TblOpts);
+        _ExistingTblOptions -> ok
     end.
 
 %%--- IP white/black list  --------------------------------------------------
 
+-spec clear_acl_list() -> ok.
+%% @doc
 clear_acl_list() ->
     of_driver_acl:clear().
 
 -spec allowed(Address :: inet:ip_address()) -> boolean().
+%% @doc
 allowed(Address) ->
     of_driver_acl:read(Address).
 
 -spec grant_ipaddr(IpAddr        :: inet:ip_address(), 
                    SwitchHandler :: term(),
                    Opts          :: list()) -> ok | {error, einval}.
+%% @doc
 grant_ipaddr(IpAddr, SwitchHandler, Opts) ->
     of_driver_acl:write(IpAddr, SwitchHandler, Opts).
 
 -spec revoke_ipaddr(IpAddr :: inet:ip_address()) -> ok | {error, einval}.
+%% @doc
 revoke_ipaddr(IpAddr) ->
     of_driver_acl:delete(IpAddr).
 
 -spec get_allowed_ipaddrs() -> [] | [ allowance() ].
+%% @doc
 get_allowed_ipaddrs() ->
     of_driver_acl:all().
 
 %%--- Datapath ID/Mac -----------------------------------------------------
 
 -spec insert_datapath_id(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, ConnPID :: pid()) -> boolean().
+%% @doc
 insert_datapath_id(DatapathInfo, ConnPID) ->
-    ets:insert_new(?DATAPATH_TBL,                          
-                    {DatapathInfo, [{main,ConnPID}]}
-                  ).
+    of_driver_datapath:insert_datapath_id(DatapathInfo, ConnPID).
+
+-spec remove_datapath_id(atom(), DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, AuxId :: integer() ) -> ok.
+% @doc
+remove_datapath_id(main,DatapathInfo,_) ->
+    remove_datapath_id(DatapathInfo);
+remove_datapath_id(aux,DatapathInfo,AuxId) ->
+    remove_datapath_aux_id(DatapathInfo,AuxId).
 
 -spec remove_datapath_id(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }) -> boolean().
+%% @doc
 remove_datapath_id(DatapathInfo) ->
-    ets:delete(?DATAPATH_TBL, DatapathInfo).
+  of_driver_datapath:remove_datapath_id(DatapathInfo).
 
 -spec remove_datapath_aux_id(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, AuxID :: integer()) -> boolean().
+%% @doc
 remove_datapath_aux_id(DatapathInfo, AuxID) ->
-    case lookup_datapath_id(DatapathInfo) of
-        []      -> false;
-        [Entry] -> remove_aux_id(Entry,DatapathInfo, AuxID)
-    end.
+  of_driver_datapath:remove_datapath_aux_id(DatapathInfo, AuxID).
 
 -spec remove_aux_id(Entry :: tuple(), DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, AuxID :: integer()) -> boolean().
+%% @doc
 remove_aux_id(Entry,DatapathInfo, AuxID) ->
-    Pos=2,
-    CurrentAuxs = element(Pos,Entry),
-    Updated=lists:keydelete(AuxID,1,CurrentAuxs),
-    ets:update_element(?DATAPATH_TBL, DatapathInfo, [{Pos,Updated}]).
+  of_driver_datapath:remove_aux_id(Entry,DatapathInfo, AuxID).
 
 -spec add_aux_id(Entry :: tuple(), DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, AuxID :: integer()) -> boolean().
+%% @doc
 add_aux_id(Entry,DatapathInfo, Aux) ->
-    Pos=2,
-    CurrentAuxs = element(Pos, Entry),
-    Updated=[Aux | CurrentAuxs],
-    ets:update_element(?DATAPATH_TBL, DatapathInfo, [{Pos, Updated}]).
+  of_driver_datapath:add_aux_id(Entry,DatapathInfo, Aux).
         
 -spec lookup_datapath_id(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }) -> list().
+%% @doc
 lookup_datapath_id(DatapathInfo) ->
-    ets:lookup(?DATAPATH_TBL,DatapathInfo).
+  of_driver_datapath:lookup_datapath_id(DatapathInfo).
+
+%%--- Switch Connection -----------------------------------------------------
+
+-spec insert_switch_connection(IpAddr :: inet:ip_address(), Port :: inet:port_number(), ConnectionPid :: pid()) -> ok.
+%% @doc
+insert_switch_connection(IpAddr,Port,ConnectionPid) ->
+    of_driver_switch_connection:insert_switch_connection(IpAddr, Port, ConnectionPid).
+
+-spec remove_swtich_connection(IpAddr :: inet:ip_address(), Port :: inet:port_number()) -> ok.
+% @doc
+remove_swtich_connection(IpAddr,Port) ->
+    of_driver_switch_connection:remove_swtich_connection(IpAddr,Port).
+
+-spec lookup_connection_pid(IpAddr :: inet:ip_address()) -> list().
+% @doc
+lookup_connection_pid(IpAddr) ->
+    of_driver_switch_connection:lookup_connection_pid(IpAddr).
+
+
+
+
+
+
+
+

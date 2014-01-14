@@ -6,6 +6,7 @@
 %%% @end
 %%%-------------------------------------------------------------------
 -define(DATAPATH_TBL,of_driver_channel_datapath).
+-define(SWITCH_CONN_TBL,of_driver_switch_connection).
 
 %% Opt is an Erlang term that sets options for the handling of this IP address. 
 -type allowance() :: [{IpAddr        :: tuple(),

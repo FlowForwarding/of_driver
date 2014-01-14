@@ -50,6 +50,7 @@ start_link(Socket) ->
     gen_server:start_link(?MODULE, [Socket], []).
 
 init([Socket]) ->
+    process_flag(trap_exit, true),
     {ok, {Address, Port}} = inet:peername(Socket),
     case of_driver:allowed_ipaddr(Address) of
         {true, #?ACL_TBL{switch_handler = SwitchHandler,
@@ -59,6 +60,7 @@ init([Socket]) ->
             Protocol = tcp,
             of_driver_utils:setopts(Protocol, Socket, [{active, once}]),
             ok = gen_server:cast(self(),hello),
+            ok = of_driver_db:insert_switch_connection(Address, Port, self()),
             {ok, #?STATE{ switch_handler      = SwitchHandler,
                           switch_handler_opts = Opts,
                           socket              = Socket,
@@ -66,7 +68,8 @@ init([Socket]) ->
                           protocol            = Protocol,
                           aux_id              = 0,
                           connection_init     = false,
-                          address             = Address
+                          address             = Address,
+                          port                = Port
                         }};
         false ->
             terminate_connection(Socket),
@@ -80,6 +83,8 @@ handle_call({send,#ofp_message{} = OfpMsg},_From,#?STATE{ protocol = Protocol,
                                                           socket   = Socket } = State) ->
     ok = of_driver_utils:send(Protocol,Socket,OfpMsg),
     {reply,ok,State};
+handle_call(close_connection,_From,State) ->
+    close_of_connection(State);
 handle_call(_Request, _From,State) ->
     {reply, ok, State}.
 
@@ -96,6 +101,9 @@ handle_cast({send,OfpMsg},#?STATE{ protocol = Protocol,
     {noreply, State};
 handle_cast(_Req,State) ->
     {noreply, State}.
+
+handle_info({'EXIT',_FromPid,_Reason},State) ->
+    close_of_connection(State);
 
 handle_info({tcp, Socket, Data},#?STATE{ parser        = undefined,
                                          version       = undefined,
@@ -116,11 +124,11 @@ handle_info({tcp, Socket, Data},#?STATE{ parser        = undefined,
                 Version = 3 -> %% of_msg_lib only currently supports V4... 
                     {ok, Parser} = ofp_parser:new(Version),
                     {ok,FeaturesBin} = of_protocol:encode(of_driver_utils:create_features_request(Version)),
-                    handle_features_reply(FeaturesBin,State#?STATE{ parser = Parser, version = Version });
+                    send_feeatures_request(FeaturesBin,State#?STATE{ parser = Parser, version = Version });
                 Version ->
                     {ok, Parser} = ofp_parser:new(Version),
                     {ok,FeaturesBin} = of_protocol:encode(of_msg_lib:get_features(Version)),
-                    handle_features_reply(FeaturesBin,State#?STATE{ parser = Parser, version = Version })
+                    send_feeatures_request(FeaturesBin,State#?STATE{ parser = Parser, version = Version })
             end;
         {error, binary_too_small} ->
             {noreply, State#?STATE{hello_buffer = <<Buffer/binary,
@@ -146,7 +154,6 @@ handle_info({tcp, Socket, Data},#?STATE{ parser       = Parser,
                     {stop, Reason, NewState}
             end;
         _Else ->
-            % XXX call appropriate callback
             close_of_connection(State)
     end;
 
@@ -154,7 +161,6 @@ handle_info({tcp_closed,_Socket},State) ->
     close_of_connection(State);
 
 handle_info({tcp_error, _Socket, _Reason},State) ->
-    % XXX call appropriate callback
     close_of_connection(State).
 
 terminate(_Reason,_State) ->
@@ -165,27 +171,29 @@ code_change(_OldVsn, State, _Extra) ->
 
 %%-----------------------------------------------------------------------------
 
-handle_features_reply(FeaturesBin,#?STATE{ socket = Socket, protocol = Protocol } = State) ->
-    ok = of_driver_utils:send(Protocol, Socket, FeaturesBin),
-    {noreply, State}.
-
 close_of_connection(State) ->
     close_of_connection(State,connection_terminated).
 
 close_of_connection(#?STATE{ socket        = Socket,
                              datapath_info = DatapathInfo,
                              conn_role     = ConnRole,
-                             aux_id        = AuxID } = State,Reason) ->
-    case ConnRole of
-        main -> 
-            of_driver_db:remove_datapath_id(DatapathInfo);
-        aux  -> 
-            of_driver_db:remove_datapath_aux_id(DatapathInfo, AuxID) 
-    end,
+                             aux_id        = AuxID,
+                             handler_pid   = HandlerPid,
+                             address       = Address,
+                             port          = Port } = State, Reason) ->
+    ok = gen_server:cast(HandlerPid,close_connection),
+    of_driver_db:remove_datapath_id(ConnRole,DatapathInfo,AuxID),
+    of_driver_db:remove_swtich_connection(Address, Port),
     ok = terminate_connection(Socket),
     ?WARNING("connection terminated: datapathid(~p) aux_id(~p) reason(~p)\n",
                             [DatapathInfo, AuxID, Reason]),
     {stop, normal, State}.
+
+%%-----------------------------------------------------------------------------
+
+send_feeatures_request(FeaturesBin,#?STATE{ socket = Socket, protocol = Protocol } = State) ->
+    ok = of_driver_utils:send(Protocol, Socket, FeaturesBin),
+    {noreply, State}.
 
 %%-----------------------------------------------------------------------------
 
@@ -205,7 +213,8 @@ handle_message(#ofp_message{version = Version,
                             #?STATE{connection_init     = false,
                                     switch_handler      = SwitchHandler,
                                     switch_handler_opts = Opts,
-                                    address             = IpAddr } = State) ->
+                                    address             = IpAddr,
+                                    handler_pid         = MainHandlerPid } = State) ->
     % Intercept features_reply for our initial features_request
     {ok,DatapathInfo} = of_driver_utils:get_datapath_info(Version, Body),
     NewState = 
@@ -218,31 +227,31 @@ handle_message(#ofp_message{version = Version,
                                               aux_id        = AuxID })
         end,
     %% XXX are we aux connection or main connection?  Call appropriate callback
-    %% This needs to store the connection................
     {ok, HandlerPid, HandlerState} = SwitchHandler:init(IpAddr, DatapathInfo, Body, Version, self(), Opts),
-    NewState#?STATE{ handler_pid = HandlerPid,
-                     handler_state = HandlerState };
+    NewHandlerState = SwitchHandler:handle_connect(HandlerPid,self(),NewState#?STATE.conn_role,NewState#?STATE.aux_id),
+    NewState#?STATE{ handler_pid   = HandlerPid,
+                     handler_state = NewHandlerState };
 handle_message(Msg, #?STATE{connection_init = true,
                             switch_handler  = SwitchHandler,
-                            handler_pid     = HandlerPid } = State) ->
+                            handler_pid     = HandlerPid } = State) ->  
     {ok,NewHandlerState} = SwitchHandler:handle_message(Msg,HandlerPid),
     State#?STATE{handler_state = NewHandlerState}.
 
 %% Internal Functions
 
-handle_datapath(#?STATE{ datapath_info = DatapathInfo,
-                         aux_id        = AuxID } = State) ->
+handle_datapath(#?STATE{ datapath_info  = DatapathInfo,
+                         aux_id         = AuxID,
+                         handler_pid    = HandlerPid,
+                         switch_handler = SwitchHandler } = State) ->
     case of_driver_db:lookup_datapath_id(DatapathInfo) of
         [] when AuxID =:= 0 ->
-            %% %% TODO : implement
-            %% handle connect
             of_driver_db:insert_datapath_id(DatapathInfo,self()),
+            ConnRole = main,            
             State#?STATE{conn_role       = main,
                          connection_init = true};
         [Entry] when AuxID =/= 0 ->
+            ConnRole = aux,
             of_driver_db:add_aux_id(Entry,DatapathInfo,{AuxID, self()}),
-            %% TODO : implement
-            %% SwitchHandler:handle_connect()
             State#?STATE{conn_role       = aux,
                          connection_init = true,
                          aux_id          = AuxID};

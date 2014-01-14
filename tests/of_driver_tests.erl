@@ -14,9 +14,8 @@ of_driver_test_() ->
 
              application:stop(mnesia),
              mnesia:delete_schema([node()]),
-             mnesia:create_schema([node()]),
              application:start(mnesia),
-             of_driver_acl:create_table([node()])
+             of_driver_db:install()
      end,
      fun(_) -> 
              ok
@@ -63,6 +62,7 @@ grant_ipaddr() ->
 	?assertEqual([R2],
 		mnesia:dirty_read(of_driver_acl,{12,12,12,12}) ).
 
+
 revoke_ipaddr() ->
 	delete_entries(),
 	?assertEqual(ok,
@@ -98,6 +98,7 @@ revoke_ipaddr() ->
 	?assertEqual({true,R2},
 		of_driver:allowed_ipaddr({12,12,12,12}) ).
 
+
 get_allowed_ipaddrs() ->
 	delete_entries(),
 
@@ -110,6 +111,7 @@ get_allowed_ipaddrs() ->
 		of_driver:grant_ipaddr({12,12,12,12}) ),
 	?assertEqual([R1,R2], 
 	 	lists:sort( of_driver:get_allowed_ipaddrs() ) ).
+
 
 set_allowed_ipaddrs() ->
 	delete_entries(),
@@ -127,16 +129,35 @@ set_allowed_ipaddrs() ->
 		lists:sort( of_driver:get_allowed_ipaddrs() ) ),
 	ok.
 
+
 send() ->
+	ok = of_driver:grant_ipaddr({127,0,0,1},echo_handler,[{enable_ping,false},
+                    									  {ping_timeout,5000},
+                    									  {ping_idle,5000},
+                    									  {multipart_timeout,30000}]),
+	of_driver_app:start([],[]),
 
-	%% How do i check that a LINC is enabled ?
+	%% start stub, that mimics LINC ...
+	{ok,Pid} = of_driver_tcp_stub:start(),
 
-	ConnectionPid = ???,
+	timer:sleep(100),
 
-	Msg = of_msg_lib:echo_request(?V4, <<1,2,3,4,5,6,7>>),
-	of_driver:send(ConnectionPid, Msg),
+	[Port,ConnectionPid] = of_driver_switch_connection:lookup_connection_pid({127,0,0,1}),
+	Msg = of_driver_utils:create_hello(4),
+	ok = of_driver:send(ConnectionPid, Msg),
 
-	ok.
+	%% ASK STUB FOR MESSAGE BOX...
+	{ok,[{ofp_message,4,features_request,0,{ofp_features_request}},
+ 	     {ofp_message,4,hello,0,{ofp_hello,[{versionbitmap,[4,3]}]}}
+ 	    ]} = of_driver_tcp_stub:get_message_heap(),
+
+ 	of_driver_app:stop([]),
+ 	try
+ 		gen_server:call(of_driver_tcp_stub,stop)
+ 	catch
+ 		exit:{stopped_self,{gen_server,call,[of_driver_tcp_stub,stop]}} ->
+ 			ok
+ 	end.
 
 sync_send() ->
 	ok.
@@ -148,6 +169,20 @@ sync_send_list() ->
 	ok.
 
 close_connection() ->
+	ok = of_driver:grant_ipaddr({127,0,0,1},echo_handler,[{enable_ping,false},
+                    									  {ping_timeout,5000},
+                    									  {ping_idle,5000},
+                    									  {multipart_timeout,30000}]),
+	of_driver_app:start([],[]),
+
+	%% start stub, that mimics LINC ...
+	{ok,Pid} = of_driver_tcp_stub:start(),
+
+	timer:sleep(100),
+
+	[Port,ConnectionPid] = of_driver_switch_connection:lookup_connection_pid({127,0,0,1}),
+	
+	of_driver:close_connection(ConnectionPid),
 	ok.
 
 close_ipaddr() ->

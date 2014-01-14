@@ -109,8 +109,12 @@ sync_send_list(Connection,Msgs) when is_list(Msgs) ->
 -spec close_connection(Connection :: term()) -> ok.
 %% @doc
 close_connection(Connection) ->
-    %% implement.
-    ok.
+    try 
+      gen_server:call(Connection,close_connection) 
+    catch 
+      exit:{normal,{gen_server,call,[Connection,close_connection]}} ->
+        ok
+    end.
 
 -spec close_ipaddr(IpAddr :: tuple()) -> ok.
 %% @doc

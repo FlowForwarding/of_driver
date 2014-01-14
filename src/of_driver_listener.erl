@@ -24,8 +24,7 @@
 -define(SERVER, ?MODULE). 
 -define(STATE, of_driver_listener_state).
 
--record(?STATE, { lsock :: inets:socket()
-                }).
+-record(?STATE, { lsock :: inets:socket() }).
 
 start_link() ->
     {ok, Pid} = gen_server:start_link({local, ?SERVER}, ?MODULE, [], []),

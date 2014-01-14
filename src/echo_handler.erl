@@ -13,7 +13,7 @@
 -export([setup/1,
          init/6,
          init_handler/6,
-         handle_connect/2,
+         handle_connect/4,
          handle_message/2
         ]).
 
@@ -26,22 +26,18 @@ state(Pid) ->
   gen_server:call(Pid,state).
  
 %% TODO: these calls probably have to be call, and then return the updated state to the of_driver_connection.
-handle_connect(NewAuxConn,LogicPid) ->
-    ok = gen_server:cast(LogicPid, {connect, NewAuxConn}),
-    ok.
+handle_connect(LogicPid,NewAuxConn,ConnRole,AuxId) ->
+    {ok,State} = gen_server:call(LogicPid, {connect, NewAuxConn, ConnRole, AuxId}),
+    {ok,State}.
 
-handle_disconnect(AuxConn, LogicPid) ->
-    ok = gen_server:cast(LogicPid, {disconnect, AuxConn}),
-    ok.
+handle_disconnect(LogicPid,AuxConn) ->
+    {ok,State} = gen_server:call(LogicPid, {disconnect, AuxConn}),
+    {ok,State}.
 
 terminate(LogicPid) ->
-    ok = gen_server:cast(LogicPid, terminate),
+    ok = gen_server:cast(LogicPid, close_connection),
     ok.
 
-handle_message(#ofp_message{ type = echo_reply } = Msg,LogicPid) ->
-    {ok,NewState} = gen_server:call(LogicPid, {message, Msg}),
-    ok = gen_server:cast(LogicPid, ping),
-    {ok,NewState};
 handle_message(Msg,LogicPid) -> %% {ok,_NewState}
     {ok,_NewState} = gen_server:call(LogicPid, {message, Msg}),
     {ok,_NewState}.
