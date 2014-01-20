@@ -10,6 +10,9 @@
 
 -behaviour(gen_server).
 
+-export([ sync_call/2 
+    ]).
+
 -export([ start_link/1,
           init/1,
           handle_call/3,
@@ -41,8 +44,17 @@
                  datapath_info       :: { DatapathId :: integer(), DatapathMac :: term() },
                  connection_init     :: boolean(),
                  handler_state       :: term(),
-                 handler_pid         :: pid()
+                 handler_pid         :: pid(),
+                 pending_sync_msg =[]:: list({ XIDs :: integer(), OfpMessage :: #ofp_message{} | undefined }),
+                 xid = 0             :: integer()
                }).
+
+%%------------------------------------------------------------------
+
+sync_call(ConnectionPid,Msg) ->
+    {ok,XID} = gen_server:call(ConnectionPid,next_xid),
+    XIDMsg = Msg#ofp_message{ xid = XID },
+    gen_server:call(ConnectionPid,{send,XIDMsg}).
 
 %%------------------------------------------------------------------
 
@@ -60,7 +72,6 @@ init([Socket]) ->
             Protocol = tcp,
             of_driver_utils:setopts(Protocol, Socket, [{active, once}]),
             ok = gen_server:cast(self(),hello),
-            ok = of_driver_db:insert_switch_connection(Address, Port, self()),
             {ok, #?STATE{ switch_handler      = SwitchHandler,
                           switch_handler_opts = Opts,
                           socket              = Socket,
@@ -79,14 +90,26 @@ init([Socket]) ->
             ignore
     end.
 
-handle_call({send,#ofp_message{} = OfpMsg},_From,#?STATE{ protocol = Protocol,
-                                                          socket   = Socket } = State) ->
-    ok = of_driver_utils:send(Protocol,Socket,OfpMsg),
-    {reply,ok,State};
 handle_call(close_connection,_From,State) ->
     close_of_connection(State);
-handle_call(_Request, _From,State) ->
-    {reply, ok, State}.
+handle_call({send,OfpMsg},From,#?STATE{ protocol = Protocol,
+                                        socket   = Socket } = State) ->
+    #ofp_message{ xid = XID } = OfpMsg,
+    {ok,EncodedMessage} = of_protocol:encode(OfpMsg),
+    ok = of_driver_utils:send(Protocol,Socket,EncodedMessage),
+    do_send_barrier(State),
+    {noreply,State#?STATE{ pending_sync_msg = [ {XID,From} | State#?STATE.pending_sync_msg ] }}; %% AND ALSO use barrier for gen_server:reply
+handle_call(pending_sync_msg,_From,State) ->
+    {reply,{ok,State#?STATE.pending_sync_msg},State};
+handle_call(barrier,_From,State) ->
+    do_send_barrier(State),
+    {reply, ok, State};
+handle_call(next_xid,_From,#?STATE{ xid = XID } = State) ->
+    NextXID = XID+1,
+    {reply,{ok,NextXID},State#?STATE{ xid = NextXID }};
+handle_call(check_for_sync_reply,_From,State) ->
+    {reply,ok,State}.
+
 
 handle_cast(hello,#?STATE{ protocol = Protocol,
                            socket   = Socket } = State) ->
@@ -94,41 +117,38 @@ handle_cast(hello,#?STATE{ protocol = Protocol,
     {ok, HelloBin} = of_protocol:encode(of_driver_utils:create_hello(Versions)),
     ok = of_driver_utils:send(Protocol, Socket, HelloBin),
     {noreply, State};
+handle_cast(barrier,State) ->
+    do_send_barrier(State),
+    {noreply, State};
 handle_cast({send,OfpMsg},#?STATE{ protocol = Protocol,
                                    socket   = Socket } = State) ->
     {ok,EncodedMessage} = of_protocol:encode(OfpMsg),
     ok = of_driver_utils:send(Protocol,Socket,EncodedMessage),
-    {noreply, State};
-handle_cast(_Req,State) ->
     {noreply, State}.
+
 
 handle_info({'EXIT',_FromPid,_Reason},State) ->
     close_of_connection(State);
-
 handle_info({tcp, Socket, Data},#?STATE{ parser        = undefined,
                                          version       = undefined,
                                          ctrl_versions = Versions,
                                          hello_buffer  = Buffer,
                                          protocol      = Protocol
                                        } = State) ->
-    % handle initial hello from switch to determine OF protocol
-    % version to use on the connection.
     of_driver_utils:setopts(Protocol, Socket, [{active, once}]),
     case of_protocol:decode(<<Buffer/binary, Data/binary>>) of
-        {ok, #ofp_message{xid = Xid, body = #ofp_hello{}} = Hello, _Leftovers} ->
+        {ok, #ofp_message{xid = Xid, body = #ofp_hello{}} = Hello, _Leftovers} -> %% and do something with Leftovers ... 
             case decide_on_version(Versions, Hello) of
-            %% TODO: !!! check that CONNECTION gets stored correctly.
-            %% and do something with Leftovers ... 
                 {failed, Reason} ->
                     handle_failed_negotiation(Xid, Reason, State);
                 Version = 3 -> %% of_msg_lib only currently supports V4... 
                     {ok, Parser} = ofp_parser:new(Version),
                     {ok,FeaturesBin} = of_protocol:encode(of_driver_utils:create_features_request(Version)),
-                    send_feeatures_request(FeaturesBin,State#?STATE{ parser = Parser, version = Version });
+                    send_features_reply(FeaturesBin,State#?STATE{ parser = Parser, version = Version });
                 Version ->
                     {ok, Parser} = ofp_parser:new(Version),
                     {ok,FeaturesBin} = of_protocol:encode(of_msg_lib:get_features(Version)),
-                    send_feeatures_request(FeaturesBin,State#?STATE{ parser = Parser, version = Version })
+                    send_features_reply(FeaturesBin,State#?STATE{ parser = Parser, version = Version })
             end;
         {error, binary_too_small} ->
             {noreply, State#?STATE{hello_buffer = <<Buffer/binary,
@@ -137,33 +157,15 @@ handle_info({tcp, Socket, Data},#?STATE{ parser        = undefined,
             handle_failed_negotiation(Xid, unsupported_version_or_bad_message,
                                       State)
     end;
-
-handle_info({tcp, Socket, Data},#?STATE{ parser       = Parser,
-                                         version      = _Version,
-                                         hello_buffer = _Buffer,
-                                         protocol     = Protocol,
-                                         socket       = Socket
-                                       } = State) ->
-    of_driver_utils:setopts(Protocol,Socket,[{active, once}]),
-    case ofp_parser:parse(Parser, Data) of
-        {ok, NewParser, Messages} ->
-            case do_handle_message(Messages,State) of
-                {ok,NewState} ->
-                    {noreply, NewState#?STATE{parser = NewParser}};
-                {stop, Reason, NewState} ->
-                    {stop, Reason, NewState}
-            end;
-        _Else ->
-            close_of_connection(State)
-    end;
-
+handle_info({tcp, Socket, Data},#?STATE{ socket = Socket } = State) ->
+    do_handle_tcp(State,Data);
 handle_info({tcp_closed,_Socket},State) ->
     close_of_connection(State);
-
 handle_info({tcp_error, _Socket, _Reason},State) ->
     close_of_connection(State).
 
-terminate(_Reason,_State) ->
+terminate(_Reason,State) ->
+    close_of_connection(State),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -182,8 +184,8 @@ close_of_connection(#?STATE{ socket        = Socket,
                              address       = Address,
                              port          = Port } = State, Reason) ->
     ok = gen_server:cast(HandlerPid,close_connection),
-    of_driver_db:remove_datapath_id(ConnRole,DatapathInfo,AuxID),
-    of_driver_db:remove_swtich_connection(Address, Port),
+    of_driver_db:remove_datapath_id(ConnRole,DatapathInfo,AuxID),   
+    ok = of_driver_db:remove_switch_connection(Address, Port),
     ok = terminate_connection(Socket),
     ?WARNING("connection terminated: datapathid(~p) aux_id(~p) reason(~p)\n",
                             [DatapathInfo, AuxID, Reason]),
@@ -191,11 +193,32 @@ close_of_connection(#?STATE{ socket        = Socket,
 
 %%-----------------------------------------------------------------------------
 
-send_feeatures_request(FeaturesBin,#?STATE{ socket = Socket, protocol = Protocol } = State) ->
+send_features_reply(FeaturesBin,#?STATE{ socket = Socket, protocol = Protocol } = State) ->
     ok = of_driver_utils:send(Protocol, Socket, FeaturesBin),
     {noreply, State}.
 
+do_send_barrier(#?STATE{ version = Version, socket = Socket, protocol = Protocol } = _State) ->
+    Barrier = of_msg_lib:barrier(Version),
+    {ok,BarrierBin} = of_protocol:encode(Barrier),
+    ok = of_driver_utils:send(Protocol, Socket, BarrierBin).
+
 %%-----------------------------------------------------------------------------
+
+do_handle_tcp(#?STATE{  protocol = Protocol,
+                        socket   = Socket,
+                        parser   = Parser} = State,Data) ->
+  of_driver_utils:setopts(Protocol,Socket,[{active, once}]),
+    case ofp_parser:parse(Parser, Data) of
+        {ok, NewParser, Messages} ->
+            case do_handle_message(Messages,State) of
+                {ok,NewState} ->
+                    {noreply, NewState#?STATE{parser = NewParser}};
+                {stop, Reason, NewState} ->
+                    {stop, Reason, NewState}
+            end;
+        _Else ->
+            close_of_connection(State)
+    end.  
 
 do_handle_message([],NewState) ->
     {ok,NewState};
@@ -209,12 +232,12 @@ do_handle_message([Message|Rest],NewState) ->
 
 handle_message(#ofp_message{version = Version,
                             type    = features_reply,
-                            body    = Body},
+                            body    = Body} = _Msg,
                             #?STATE{connection_init     = false,
                                     switch_handler      = SwitchHandler,
                                     switch_handler_opts = Opts,
-                                    address             = IpAddr} = State) ->
-    % Intercept features_reply for our initial features_request
+                                    address             = IpAddr,
+                                    port                = Port} = State) ->
     {ok,DatapathInfo} = of_driver_utils:get_datapath_info(Version, Body),
     NewState = 
         case Version of
@@ -225,18 +248,37 @@ handle_message(#ofp_message{version = Version,
                 handle_datapath(State#?STATE{ datapath_info = DatapathInfo, 
                                               aux_id        = AuxID })
         end,
-    %% XXX are we aux connection or main connection?  Call appropriate callback
+    ok = of_driver_db:insert_switch_connection(IpAddr, Port, self(),NewState#?STATE.conn_role),
     {ok, HandlerPid, _HandlerState} = SwitchHandler:init(IpAddr, DatapathInfo, Body, Version, self(), Opts),
     NewHandlerState = SwitchHandler:handle_connect(HandlerPid,self(),NewState#?STATE.conn_role,NewState#?STATE.aux_id),
+
+
+
     NewState#?STATE{ handler_pid   = HandlerPid,
                      handler_state = NewHandlerState };
+% handle_message(Msg, #?STATE{connection_init = true, pending_sync_msg = [] } = State) ->
+
+%     io:format(" PENDING MESSAGE RECEIVED 11 ......................  \n\n",[]),
+
+%     switch_handler_next_state(Msg,State);
 handle_message(Msg, #?STATE{connection_init = true,
-                            switch_handler  = SwitchHandler,
-                            handler_pid     = HandlerPid } = State) ->  
+                            pending_sync_msg = PSM } = State) ->
+    #ofp_message{ xid = XID } = Msg,
+    NextState=
+        case lists:keyfind(XID, 1, PSM)  of
+            {XID,Client} ->
+                Result = gen_server:reply(Client, {ok,Msg}),
+                io:format("Result: ~p\n",[Result]),
+                State#?STATE{ pending_sync_msg = lists:keydelete(XID, 1, PSM) };
+            false ->
+                State
+        end,
+    switch_handler_next_state(Msg,NextState).
+
+switch_handler_next_state(Msg,#?STATE{ switch_handler = SwitchHandler,
+                                       handler_pid    = HandlerPid } = State) ->
     {ok,NewHandlerState} = SwitchHandler:handle_message(Msg,HandlerPid),
     State#?STATE{handler_state = NewHandlerState}.
-
-%% Internal Functions
 
 handle_datapath(#?STATE{ datapath_info  = DatapathInfo,
                          aux_id         = AuxID} = State) ->

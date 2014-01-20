@@ -6,7 +6,7 @@ application:start(of_protocol).
 application:start(lager).
 
 application:load(of_driver).
-%application:start(of_driver).
-%of_driver:grant_ipaddr({127,0,0,1}).
-%of_driver_tcp_stub:start_link().
-% application:start(of_driver).
+application:start(of_driver).
+%of_driver_tcp_stub:start().
+reloader:start().
+

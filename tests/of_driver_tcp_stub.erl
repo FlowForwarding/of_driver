@@ -2,6 +2,8 @@
 
 -behaviour(gen_server).
 
+-include_lib("of_protocol/include/of_protocol.hrl").
+
 %% API
 -export([start/0]).
 
@@ -68,8 +70,17 @@ handle_info({'EXIT',_FromPid,_Reason},#?STATE{ socket = Socket } = State) ->
 handle_info({tcp, Socket, Data},#?STATE{ message_heap = MH } = State) ->
 	% io:format("HANDLE TCP SENT FROM SWITCH .... DATA:~p \n",[Data]),
 	inet:setopts(Socket, [{active,once}]),
-	{ok,DecodedMessage} = handle_message(Data,State),
-	{noreply,State#?STATE{ message_heap = [DecodedMessage|MH] }};
+	Buffer = <<>>,
+	{ok,OfpMessage,_Leftovers} = of_protocol:decode(<<Buffer/binary, Data/binary>>),
+	case OfpMessage of
+		#ofp_message{ type = features_request } = Msg ->
+			FeaturesReply = {ofp_message,4,features_reply,0,{ofp_features_reply,<<8,0,39,150,212,121>>,0,0,255,0,[flow_stats,table_stats,port_stats,group_stats,queue_stats]}},
+			{ok,Bin} = of_protocol:encode(FeaturesReply),
+			of_driver_utils:send(tcp, Socket, Bin);
+		_Msg ->
+			ok
+	end,
+	{noreply,State#?STATE{ message_heap = [OfpMessage|MH] }};
 
 handle_info({tcp_closed,_Socket},State) ->
 	timer:apply_after(1000, gen_server, cast, [?MODULE,connect]),
@@ -87,11 +98,6 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %%%===================================================================
-
-handle_message(Data,State) ->
-	Buffer = <<>>,
-	{ok,OfpMessage,_Leftovers} = of_protocol:decode(<<Buffer/binary, Data/binary>>),
-	{ok,OfpMessage}.
 
 connect(Address, Port, Options) ->
 	gen_tcp:connect(Address, Port, Options).

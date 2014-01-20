@@ -78,48 +78,52 @@ set_allowed_ipaddrs(Allowances) when is_list(Allowances) ->
                   end, Allowances),
     PrevAllowed.
 
--spec send(Connection :: term(), Msg :: #ofp_message{}) ->
+-spec send(ConnectionPid :: term(), Msg :: #ofp_message{}) ->
                   ok | {error, Reason :: term()}.
 %% @doc
-send(Connection, #ofp_message{} = Msg) ->
-    %% implement.
-    send_list(Connection,[Msg]).
+send(ConnectionPid, #ofp_message{} = Msg) ->
+    gen_server:cast(ConnectionPid,{send,Msg}).
 
--spec sync_send(Connection :: term(), Msg :: #ofp_message{}) -> 
+-spec sync_send(ConnectionPid :: term(), Msg :: #ofp_message{}) -> 
                        {ok, Reply :: #ofp_message{} | noreply} |
                        {error, Reason :: term()}.
 %% @doc
-sync_send(Connection, #ofp_message{} = Msg) -> 
-    %% implement.
-    sync_send_list(Connection,[Msg]).
+sync_send(ConnectionPid, #ofp_message{} = Msg) -> 
+    of_driver_connection:sync_call(ConnectionPid,Msg).
 
--spec send_list(Connection :: term(), Messages :: list(Msg::#ofp_message{})) -> 
+-spec send_list(ConnectionPid :: term(), Messages :: list(Msg::#ofp_message{})) -> 
                        ok | {error, [ok | {error, Reason :: term()}]}.
 %% @doc
-send_list(Connection,Msgs) when is_list(Msgs) ->
-    lists:foreach( fun(Msg) -> gen_server:cast(Connection,{send,Msg}) end, Msgs).
+send_list(ConnectionPid,[]) ->
+    ok = gen_server:cast(ConnectionPid,barrier);
+send_list(ConnectionPid,[H|T]) ->
+    gen_server:cast(ConnectionPid,{send,H}),
+    send_list(ConnectionPid,T).
 
--spec sync_send_list(Connection :: term(),Messages :: list(Msg::#ofp_message{})) -> 
+-spec sync_send_list(ConnectionPid :: term(),Messages :: list(Msg::#ofp_message{})) -> 
                             {ok, [{ok, Reply :: #ofp_message{} | noreply}]} |
                             {error, Reason :: term(), [{ok, Reply :: #ofp_message{} | noreply} | {error, Reason :: term()}]}.
 %% @doc
-sync_send_list(Connection,Msgs) when is_list(Msgs) -> 
-    lists:foreach(fun(Msg) -> gen_server:call(Connection,{send,Msg}) end,Msgs).
+sync_send_list(ConnectionPid,Msgs) when is_list(Msgs) -> 
+    Response = lists:foreach(fun(Msg) -> gen_server:call(ConnectionPid,{send,Msg}) end,Msgs),
+    {ok,_BarrierResponse} = gen_server:call(ConnectionPid,barrier),
+    {ok,Response}.
 
--spec close_connection(Connection :: term()) -> ok.
+-spec close_connection(ConnectionPid :: term()) -> ok.
 %% @doc
-close_connection(Connection) ->
+close_connection(ConnectionPid) -> %% ONLY CLOSE CONNECTION, might be main, or aux
     try 
-      gen_server:call(Connection,close_connection) 
+      gen_server:call(ConnectionPid,close_connection) 
     catch 
-      exit:{normal,{gen_server,call,[Connection,close_connection]}} ->
+      exit:{normal,{gen_server,call,[ConnectionPid,close_connection]}} ->
         ok
     end.
 
 -spec close_ipaddr(IpAddr :: tuple()) -> ok.
 %% @doc
-close_ipaddr(_IpAddr) -> 
+close_ipaddr(_IpAddr) -> %% CLOSE ALL CONNECTIONS TO IP ADDRESS
     %% implement.
+    %% FIND ALL IP ADDRESS CONNECTIONS AND DROP ALL!!!
     ok.
 
 -spec set_xid(Msg :: #ofp_message{}, Xid :: integer()) -> {ok,#ofp_message{}}.
@@ -127,8 +131,8 @@ close_ipaddr(_IpAddr) ->
 set_xid(#ofp_message{} = Msg, Xid) -> 
     {ok,Msg#ofp_message{ xid = Xid}}.
 
--spec gen_xid(Connection :: term()) -> {ok,Xid :: integer()}.
+-spec gen_xid(ConnectionPid :: term()) -> {ok,Xid :: integer()}.
 %% @doc
-gen_xid(_Connection) -> 
-    %% implement.
-    {ok,_Xid=0}.
+gen_xid(ConnectionPidPid) ->
+    {ok,Xid} = gen_server:call(ConnectionPidPid,next_xid),
+    {ok,Xid}.

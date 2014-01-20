@@ -28,8 +28,8 @@
           lookup_datapath_id/1,
           add_aux_id/3
         ]).
--export([ insert_switch_connection/3,
-          remove_swtich_connection/2,
+-export([ insert_switch_connection/4,
+          remove_switch_connection/2,
           lookup_connection_pid/1
         ]).
 
@@ -49,9 +49,9 @@ install_try() ->
     mnesia:create_schema([node()]),
     application:start(mnesia),
     ok = of_driver_acl:create_table([node()]),
-    ok = mnesia:wait_for_tables([of_driver_acl],infinity),
+    ok = mnesia:wait_for_tables([of_driver_acl,of_driver_xid],infinity),
     lists:foreach(fun(Tbl) -> install_try_ets(Tbl) end,
-                  [?DATAPATH_TBL,?SWITCH_CONN_TBL]).
+                  [?DATAPATH_TBL, ?SWITCH_CONN_TBL, ?SYNC_MSG_TBL]).
 
 install_try_ets(Tbl) ->
   install_try_ets(Tbl,[ordered_set, public, named_table]).
@@ -127,15 +127,15 @@ lookup_datapath_id(DatapathInfo) ->
 
 %%--- Switch Connection -----------------------------------------------------
 
--spec insert_switch_connection(IpAddr :: inet:ip_address(), Port :: inet:port_number(), ConnectionPid :: pid()) -> ok.
+-spec insert_switch_connection(IpAddr :: inet:ip_address(), Port :: inet:port_number(), ConnectionPid :: pid(),ConnRole :: atom()) -> ok.
 %% @doc
-insert_switch_connection(IpAddr,Port,ConnectionPid) ->
-    of_driver_switch_connection:insert_switch_connection(IpAddr, Port, ConnectionPid).
+insert_switch_connection(IpAddr,Port,ConnectionPid,ConnRole) ->
+    of_driver_switch_connection:insert_switch_connection(IpAddr, Port, ConnectionPid, ConnRole).
 
--spec remove_swtich_connection(IpAddr :: inet:ip_address(), Port :: inet:port_number()) -> ok.
+-spec remove_switch_connection(IpAddr :: inet:ip_address(), Port :: inet:port_number()) -> ok.
 % @doc
-remove_swtich_connection(IpAddr,Port) ->
-    of_driver_switch_connection:remove_swtich_connection(IpAddr,Port).
+remove_switch_connection(IpAddr,Port) ->
+    of_driver_switch_connection:remove_switch_connection(IpAddr,Port).
 
 -spec lookup_connection_pid(IpAddr :: inet:ip_address()) -> list().
 % @doc
