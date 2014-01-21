@@ -45,16 +45,20 @@
                  connection_init     :: boolean(),
                  handler_state       :: term(),
                  handler_pid         :: pid(),
-                 pending_sync_msg =[]:: list({ XIDs :: integer(), OfpMessage :: #ofp_message{} | undefined }),
+                 pending_msgs=[]     :: list({ XIDs :: integer(), OfpMessage :: #ofp_message{} | undefined }),
                  xid = 0             :: integer()
                }).
 
 %%------------------------------------------------------------------
 
+sync_call(ConnectionPid,Msgs) when is_list(Msgs) ->
+    lists:foreach(fun(Msg) -> 
+                    {ok,_XID} = gen_server:call(ConnectionPid,{send,Msg}) 
+                  end, Msgs),
+    gen_server:call(ConnectionPid,{send,barrier});
 sync_call(ConnectionPid,Msg) ->
-    {ok,XID} = gen_server:call(ConnectionPid,next_xid),
-    XIDMsg = Msg#ofp_message{ xid = XID },
-    gen_server:call(ConnectionPid,{send,XIDMsg}).
+    {ok,_XID} = gen_server:call(ConnectionPid,{send,Msg}),
+    gen_server:call(ConnectionPid,{send,barrier}).
 
 %%------------------------------------------------------------------
 
@@ -71,7 +75,7 @@ init([Socket]) ->
             Versions = of_driver_utils:conf_default(of_compatible_versions, fun erlang:is_list/1, [3, 4]),
             Protocol = tcp,
             of_driver_utils:setopts(Protocol, Socket, [{active, once}]),
-            ok = gen_server:cast(self(),hello),
+            ok = gen_server:cast(self(),{send,hello}),
             {ok, #?STATE{ switch_handler      = SwitchHandler,
                           switch_handler_opts = Opts,
                           socket              = Socket,
@@ -94,40 +98,43 @@ init([Socket]) ->
 
 handle_call(close_connection,_From,State) ->
     close_of_connection(State,called_close_connection);
-handle_call({send,OfpMsg},From,#?STATE{ protocol = Protocol,
-                                        socket   = Socket } = State) ->
-    #ofp_message{ xid = XID } = OfpMsg,
-    {ok,EncodedMessage} = of_protocol:encode(OfpMsg),
-    ok = of_driver_utils:send(Protocol,Socket,EncodedMessage),
-    do_send_barrier(State),
-    {noreply,State#?STATE{ pending_sync_msg = [ {XID,From} | State#?STATE.pending_sync_msg ] }}; %% AND ALSO use barrier for gen_server:reply
-handle_call(pending_sync_msg,_From,State) ->
-    {reply,{ok,State#?STATE.pending_sync_msg},State};
-handle_call(barrier,_From,State) ->
-    do_send_barrier(State),
-    {reply, ok, State};
-handle_call(next_xid,_From,#?STATE{ xid = XID } = State) ->
-    NextXID = XID+1,
-    {reply,{ok,NextXID},State#?STATE{ xid = NextXID }};
-handle_call(socket,_From,State) ->
-    {reply,State#?STATE.socket,State}.
+handle_call({send,barrier},From,#?STATE{ version  = Version } = State) ->
+    Barrier = of_msg_lib:barrier(Version),
+    XID = handle_send(Barrier,State),
+    {noreply,State#?STATE{ xid          = XID,
+                           pending_msgs = [{XID,From}|State#?STATE.pending_msgs]
+                          }};
+handle_call({send,OfpMsg},_From,State) ->
+    XID = handle_send(OfpMsg,State),
+    {reply,{ok,XID},State#?STATE{ xid          = XID,
+                                  pending_msgs = [{XID,no_response}|State#?STATE.pending_msgs]
+                                 }};
+handle_call(pending_msgs,_From,State) -> %% ***DEBUG
+    {reply,{ok,State#?STATE.pending_msgs},State}.
 
+handle_send(Msg,#?STATE{ protocol = Protocol,
+                         socket   = Socket,
+                         xid      = XID } = _State) ->
+  NextXID = XID+1,
+  {ok,EncodedMessage} = of_protocol:encode( Msg#ofp_message{ xid = NextXID } ),
+  ok = of_driver_utils:send(Protocol,Socket,EncodedMessage),
+  NextXID.
+    
 %%------------------------------------------------------------------
 
-handle_cast(hello,#?STATE{ protocol = Protocol,
-                           socket   = Socket } = State) ->
+handle_cast({send,hello},State) ->
     Versions = of_driver_utils:conf_default(of_compatible_versions, fun erlang:is_list/1, [3, 4]),
-    {ok, HelloBin} = of_protocol:encode(of_driver_utils:create_hello(Versions)),
-    ok = of_driver_utils:send(Protocol, Socket, HelloBin),
+    Msg=of_driver_utils:create_hello(Versions),
+    handle_cast_send(Msg,State),
     {noreply, State};
-handle_cast(barrier,State) ->
-    do_send_barrier(State),
-    {noreply, State};
-handle_cast({send,OfpMsg},#?STATE{ protocol = Protocol,
-                                   socket   = Socket } = State) ->
-    {ok,EncodedMessage} = of_protocol:encode(OfpMsg),
-    ok = of_driver_utils:send(Protocol,Socket,EncodedMessage),
+handle_cast({send,Msg},State) ->
+    handle_cast_send(Msg,State),
     {noreply, State}.
+
+handle_cast_send(Msg,#?STATE{ protocol = Protocol,
+                              socket   = Socket } = _State) ->
+    {ok,EncodedMessage} = of_protocol:encode(Msg),
+    ok = of_driver_utils:send(Protocol,Socket,EncodedMessage).
 
 %%------------------------------------------------------------------
 
@@ -183,11 +190,6 @@ code_change(_OldVsn, State, _Extra) ->
 send_features_reply(FeaturesBin,#?STATE{ socket = Socket, protocol = Protocol } = State) ->
     ok = of_driver_utils:send(Protocol, Socket, FeaturesBin),
     {noreply, State}.
-
-do_send_barrier(#?STATE{ version = Version, socket = Socket, protocol = Protocol } = _State) ->
-    Barrier = of_msg_lib:barrier(Version),
-    {ok,BarrierBin} = of_protocol:encode(Barrier),
-    ok = of_driver_utils:send(Protocol, Socket, BarrierBin).
 
 %%-----------------------------------------------------------------------------
 
@@ -250,19 +252,25 @@ handle_message(#ofp_message{version = Version,
             NewState#?STATE{ handler_pid   = HandlerPid,
                              handler_state = NewHandlerState }
     end;
+
 handle_message(Msg, #?STATE{connection_init = true,
-                            pending_sync_msg = PSM } = State) ->
-    #ofp_message{ xid = XID } = Msg,
-    NextState=
-        case lists:keyfind(XID, 1, PSM)  of
-            {XID,Client} ->
-                Result = gen_server:reply(Client, {ok,Msg}),
-                io:format("Result: ~p\n",[Result]),
-                State#?STATE{ pending_sync_msg = lists:keydelete(XID, 1, PSM) };
-            false ->
-                State
-        end,
+                            pending_msgs = [] } = State) ->
+    switch_handler_next_state(Msg,State);
+handle_message(Msg, #?STATE{connection_init = true,
+                            pending_msgs = _PSM } = State) ->
+    NextState=handle_pending_msg(Msg,State),
     switch_handler_next_state(Msg,NextState).
+
+handle_pending_msg(#ofp_message{ xid = XID, type = barrier_reply } = Msg,#?STATE{ pending_msgs = PSM } = State) ->
+    {XID,From} = lists:keyfind(XID, 1, PSM),
+    ReplyListWithBarrier = lists:keyreplace(XID,1,PSM,{XID,Msg}),
+    F = fun({_SomeXID,no_reply}) -> false; ({_SomeXID,#ofp_message{} = _Reply}) -> true end,
+    {ReplyList,PendingList} = lists:partition(F,ReplyListWithBarrier),
+    gen_server:reply(From, {ok,lists:foldl(fun({_MsgXID,M},Acc) -> [M|Acc] end,[],ReplyList)}),
+    State#?STATE{ pending_msgs = PendingList };
+handle_pending_msg(#ofp_message{ xid = XID, type = _Type } = Msg,#?STATE{ pending_msgs = PSM } = State) ->
+    {XID,no_response} = lists:keyfind(XID, 1, PSM),
+    State#?STATE{ pending_msgs = lists:keyreplace(XID,1,PSM,{XID,Msg}) }.
 
 handle_datapath(#?STATE{ datapath_info  = DatapathInfo,
                          aux_id         = AuxID} = State) ->

@@ -19,8 +19,8 @@
           get_allowed_ipaddrs/0,
           set_allowed_ipaddrs/1,
           send/2,
-          sync_send/2,
           send_list/2,
+          sync_send/2,
           sync_send_list/2,
           close_connection/1,
           close_ipaddr/1,
@@ -78,11 +78,24 @@ set_allowed_ipaddrs(Allowances) when is_list(Allowances) ->
                   end, Allowances),
     PrevAllowed.
 
+%%------------------------------------------------------------------
+
 -spec send(ConnectionPid :: term(), Msg :: #ofp_message{}) ->
                   ok | {error, Reason :: term()}.
 %% @doc
 send(ConnectionPid, #ofp_message{} = Msg) ->
     gen_server:cast(ConnectionPid,{send,Msg}).
+
+-spec send_list(ConnectionPid :: term(), Messages :: list(Msg::#ofp_message{})) -> 
+                       ok | {error, [ok | {error, Reason :: term()}]}.
+%% @doc
+send_list(ConnectionPid,[]) ->
+    ok;
+send_list(ConnectionPid,[H|T]) ->
+    gen_server:cast(ConnectionPid,{send,H}),
+    send_list(ConnectionPid,T).
+
+%%------------------------------------------------------------------
 
 -spec sync_send(ConnectionPid :: term(), Msg :: #ofp_message{}) -> 
                        {ok, Reply :: #ofp_message{} | noreply} |
@@ -91,23 +104,14 @@ send(ConnectionPid, #ofp_message{} = Msg) ->
 sync_send(ConnectionPid, #ofp_message{} = Msg) -> 
     of_driver_connection:sync_call(ConnectionPid,Msg).
 
--spec send_list(ConnectionPid :: term(), Messages :: list(Msg::#ofp_message{})) -> 
-                       ok | {error, [ok | {error, Reason :: term()}]}.
-%% @doc
-send_list(ConnectionPid,[]) ->
-    ok = gen_server:cast(ConnectionPid,barrier);
-send_list(ConnectionPid,[H|T]) ->
-    gen_server:cast(ConnectionPid,{send,H}),
-    send_list(ConnectionPid,T).
-
 -spec sync_send_list(ConnectionPid :: term(),Messages :: list(Msg::#ofp_message{})) -> 
                             {ok, [{ok, Reply :: #ofp_message{} | noreply}]} |
                             {error, Reason :: term(), [{ok, Reply :: #ofp_message{} | noreply} | {error, Reason :: term()}]}.
 %% @doc
 sync_send_list(ConnectionPid,Msgs) when is_list(Msgs) -> 
-    Response = lists:foreach(fun(Msg) -> gen_server:call(ConnectionPid,{send,Msg}) end,Msgs),
-    {ok,_BarrierResponse} = gen_server:call(ConnectionPid,barrier),
-    {ok,Response}.
+    of_driver_connection:sync_call(ConnectionPid,Msgs).
+
+%%------------------------------------------------------------------
 
 -spec close_connection(ConnectionPid :: term()) -> ok.
 %% @doc
