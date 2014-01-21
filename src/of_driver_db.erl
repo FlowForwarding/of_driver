@@ -49,7 +49,7 @@ install_try() ->
     mnesia:create_schema([node()]),
     application:start(mnesia),
     ok = of_driver_acl:create_table([node()]),
-    ok = mnesia:wait_for_tables([of_driver_acl,of_driver_xid],infinity),
+    ok = mnesia:wait_for_tables([of_driver_acl],infinity),
     lists:foreach(fun(Tbl) -> install_try_ets(Tbl) end,
                   [?DATAPATH_TBL, ?SWITCH_CONN_TBL]).
 
