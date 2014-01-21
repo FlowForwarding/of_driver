@@ -51,7 +51,7 @@ install_try() ->
     ok = of_driver_acl:create_table([node()]),
     ok = mnesia:wait_for_tables([of_driver_acl,of_driver_xid],infinity),
     lists:foreach(fun(Tbl) -> install_try_ets(Tbl) end,
-                  [?DATAPATH_TBL, ?SWITCH_CONN_TBL, ?SYNC_MSG_TBL]).
+                  [?DATAPATH_TBL, ?SWITCH_CONN_TBL]).
 
 install_try_ets(Tbl) ->
   install_try_ets(Tbl,[ordered_set, public, named_table]).
