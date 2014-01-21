@@ -262,13 +262,20 @@ handle_message(Msg, #?STATE{connection_init = true,
     switch_handler_next_state(Msg,NextState).
 
 handle_pending_msg(#ofp_message{ xid = XID, type = barrier_reply } = Msg,#?STATE{ pending_msgs = PSM } = State) ->
-    {XID,From} = lists:keyfind(XID, 1, PSM),
-    ReplyListWithBarrier = lists:keyreplace(XID,1,PSM,{XID,Msg}),
-    F = fun({_SomeXID,no_reply}) -> false; ({_SomeXID,#ofp_message{} = _Reply}) -> true end,
-    {ReplyList,PendingList} = lists:partition(F,ReplyListWithBarrier),
-    gen_server:reply(From, {ok,lists:foldl(fun({_MsgXID,M},Acc) -> [M|Acc] end,[],ReplyList)}),
-    State#?STATE{ pending_msgs = PendingList };
+    case lists:keyfind(XID, 1, PSM) of 
+        {XID,no_response} -> %% Prevent intentional barrier REPLY's in list of msg's from trying to gen_server:reply
+            update_response(XID,Msg,PSM,State);
+        {XID,From} ->
+            ReplyListWithBarrier = lists:keyreplace(XID,1,PSM,{XID,Msg}),
+            F = fun({_SomeXID,no_reply}) -> false; ({_SomeXID,#ofp_message{} = _Reply}) -> true end,
+            {ReplyList,PendingList} = lists:partition(F,ReplyListWithBarrier),
+            gen_server:reply(From, {ok,lists:foldl(fun({_MsgXID,M},Acc) -> [M|Acc] end,[],ReplyList)}),
+            State#?STATE{ pending_msgs = PendingList }
+    end;
 handle_pending_msg(#ofp_message{ xid = XID, type = _Type } = Msg,#?STATE{ pending_msgs = PSM } = State) ->
+    update_response(XID,Msg,PSM,State).
+    
+update_response(XID,Msg,PSM,State) ->
     {XID,no_response} = lists:keyfind(XID, 1, PSM),
     State#?STATE{ pending_msgs = lists:keyreplace(XID,1,PSM,{XID,Msg}) }.
 
