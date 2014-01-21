@@ -90,8 +90,10 @@ init([Socket]) ->
             ignore
     end.
 
+%%------------------------------------------------------------------
+
 handle_call(close_connection,_From,State) ->
-    close_of_connection(State);
+    close_of_connection(State,called_close_connection);
 handle_call({send,OfpMsg},From,#?STATE{ protocol = Protocol,
                                         socket   = Socket } = State) ->
     #ofp_message{ xid = XID } = OfpMsg,
@@ -107,9 +109,10 @@ handle_call(barrier,_From,State) ->
 handle_call(next_xid,_From,#?STATE{ xid = XID } = State) ->
     NextXID = XID+1,
     {reply,{ok,NextXID},State#?STATE{ xid = NextXID }};
-handle_call(check_for_sync_reply,_From,State) ->
-    {reply,ok,State}.
+handle_call(socket,_From,State) ->
+    {reply,State#?STATE.socket,State}.
 
+%%------------------------------------------------------------------
 
 handle_cast(hello,#?STATE{ protocol = Protocol,
                            socket   = Socket } = State) ->
@@ -126,9 +129,10 @@ handle_cast({send,OfpMsg},#?STATE{ protocol = Protocol,
     ok = of_driver_utils:send(Protocol,Socket,EncodedMessage),
     {noreply, State}.
 
+%%------------------------------------------------------------------
 
 handle_info({'EXIT',_FromPid,_Reason},State) ->
-    close_of_connection(State);
+    close_of_connection(State,trap_exit_close);
 handle_info({tcp, Socket, Data},#?STATE{ parser        = undefined,
                                          version       = undefined,
                                          ctrl_versions = Versions,
@@ -157,15 +161,18 @@ handle_info({tcp, Socket, Data},#?STATE{ parser        = undefined,
             handle_failed_negotiation(Xid, unsupported_version_or_bad_message,
                                       State)
     end;
-handle_info({tcp, Socket, Data},#?STATE{ socket = Socket } = State) ->
+handle_info({tcp, Socket, Data},#?STATE{ protocol = Protocol, socket = Socket } = State) ->
+    of_driver_utils:setopts(Protocol,Socket,[{active, once}]),
     do_handle_tcp(State,Data);
 handle_info({tcp_closed,_Socket},State) ->
-    close_of_connection(State);
+    close_of_connection(State,tcp_closed);
 handle_info({tcp_error, _Socket, _Reason},State) ->
-    close_of_connection(State).
+    close_of_connection(State,tcp_error).
+
+%%------------------------------------------------------------------
 
 terminate(_Reason,State) ->
-    close_of_connection(State),
+    close_of_connection(State,gen_server_terminate),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -173,8 +180,114 @@ code_change(_OldVsn, State, _Extra) ->
 
 %%-----------------------------------------------------------------------------
 
-close_of_connection(State) ->
-    close_of_connection(State,connection_terminated).
+send_features_reply(FeaturesBin,#?STATE{ socket = Socket, protocol = Protocol } = State) ->
+    ok = of_driver_utils:send(Protocol, Socket, FeaturesBin),
+    {noreply, State}.
+
+do_send_barrier(#?STATE{ version = Version, socket = Socket, protocol = Protocol } = _State) ->
+    Barrier = of_msg_lib:barrier(Version),
+    {ok,BarrierBin} = of_protocol:encode(Barrier),
+    ok = of_driver_utils:send(Protocol, Socket, BarrierBin).
+
+%%-----------------------------------------------------------------------------
+
+do_handle_tcp(#?STATE{ parser = Parser} = State,Data) ->
+    case ofp_parser:parse(Parser, Data) of
+        {ok, NewParser, Messages} ->
+            case do_handle_message(Messages,State) of
+                {ok,NewState} ->
+                    {noreply, NewState#?STATE{parser = NewParser}};
+                {stop, Reason, NewState} ->
+                    {stop, Reason, NewState}
+            end;
+        _Else ->
+            close_of_connection(State,parse_error)
+    end.  
+
+do_handle_message([],NewState) ->
+    {ok,NewState};
+do_handle_message([Message|Rest],NewState) ->
+    case handle_message(Message,NewState) of
+        {stop, Reason, State} ->
+            {stop, Reason, State};
+        NextState ->
+            do_handle_message(Rest,NextState)
+    end.
+
+handle_message(#ofp_message{version = Version = 3,
+                            type    = features_reply,
+                            body    = Body} = _Msg,
+                            #?STATE{connection_init     = false,
+                                    switch_handler      = SwitchHandler,
+                                    switch_handler_opts = Opts,
+                                    address             = IpAddr,
+                                    port                = Port} = State) ->
+    {ok,DatapathInfo} = of_driver_utils:get_datapath_info(Version, Body),
+    NewState = State#?STATE{datapath_info = DatapathInfo},
+    ok = of_driver_db:insert_switch_connection(IpAddr, Port, self(),NewState#?STATE.conn_role),
+    {ok, HandlerPid, _HandlerState} = SwitchHandler:init(IpAddr, DatapathInfo, Body, Version, self(), Opts),
+    NewHandlerState = SwitchHandler:handle_connect(HandlerPid,self(),NewState#?STATE.conn_role,NewState#?STATE.aux_id),
+    NewState#?STATE{ handler_pid   = HandlerPid,
+                     handler_state = NewHandlerState };
+handle_message(#ofp_message{version = Version,
+                            type    = features_reply,
+                            body    = Body} = _Msg,
+                            #?STATE{connection_init     = false,
+                                    switch_handler      = SwitchHandler,
+                                    switch_handler_opts = Opts,
+                                    address             = IpAddr,
+                                    port                = Port} = State) ->
+    {ok,DatapathInfo} = of_driver_utils:get_datapath_info(Version, Body),
+    {ok,AuxID} = of_driver_utils:get_aux_id(Version, Body),
+    case handle_datapath(State#?STATE{ datapath_info = DatapathInfo, 
+                                       aux_id        = AuxID }) of 
+        {stop, Reason, State} ->
+            {stop, Reason, State};
+        NewState ->
+            ok = of_driver_db:insert_switch_connection(IpAddr, Port, self(),NewState#?STATE.conn_role),
+            {ok, HandlerPid, _HandlerState} = SwitchHandler:init(IpAddr, DatapathInfo, Body, Version, self(), Opts),
+            NewHandlerState = SwitchHandler:handle_connect(HandlerPid,self(),NewState#?STATE.conn_role,NewState#?STATE.aux_id),
+            NewState#?STATE{ handler_pid   = HandlerPid,
+                             handler_state = NewHandlerState }
+    end;
+handle_message(Msg, #?STATE{connection_init = true,
+                            pending_sync_msg = PSM } = State) ->
+    #ofp_message{ xid = XID } = Msg,
+    NextState=
+        case lists:keyfind(XID, 1, PSM)  of
+            {XID,Client} ->
+                Result = gen_server:reply(Client, {ok,Msg}),
+                io:format("Result: ~p\n",[Result]),
+                State#?STATE{ pending_sync_msg = lists:keydelete(XID, 1, PSM) };
+            false ->
+                State
+        end,
+    switch_handler_next_state(Msg,NextState).
+
+handle_datapath(#?STATE{ datapath_info  = DatapathInfo,
+                         aux_id         = AuxID} = State) ->
+    case of_driver_db:lookup_datapath_id(DatapathInfo) of
+        [] when AuxID =:= 0 ->
+            of_driver_db:insert_datapath_id(DatapathInfo,self()),
+            State#?STATE{conn_role       = main,
+                         connection_init = true};
+        [] when AuxID =/= 0 ->
+            close_of_connection(State,aux_conflict);
+        [Entry] when AuxID =/= 0 ->
+            of_driver_db:add_aux_id(Entry,DatapathInfo,{AuxID, self()}),
+            State#?STATE{conn_role       = aux,
+                         connection_init = true,
+                         aux_id          = AuxID};
+        _ ->
+            close_of_connection(State,aux_conflict)
+    end.
+
+switch_handler_next_state(Msg,#?STATE{ switch_handler = SwitchHandler,
+                                       handler_pid    = HandlerPid } = State) ->
+    {ok,NewHandlerState} = SwitchHandler:handle_message(Msg,HandlerPid),
+    State#?STATE{handler_state = NewHandlerState}.
+
+%%-----------------------------------------------------------------------------
 
 close_of_connection(#?STATE{ socket        = Socket,
                              datapath_info = DatapathInfo,
@@ -192,110 +305,6 @@ close_of_connection(#?STATE{ socket        = Socket,
     {stop, normal, State}.
 
 %%-----------------------------------------------------------------------------
-
-send_features_reply(FeaturesBin,#?STATE{ socket = Socket, protocol = Protocol } = State) ->
-    ok = of_driver_utils:send(Protocol, Socket, FeaturesBin),
-    {noreply, State}.
-
-do_send_barrier(#?STATE{ version = Version, socket = Socket, protocol = Protocol } = _State) ->
-    Barrier = of_msg_lib:barrier(Version),
-    {ok,BarrierBin} = of_protocol:encode(Barrier),
-    ok = of_driver_utils:send(Protocol, Socket, BarrierBin).
-
-%%-----------------------------------------------------------------------------
-
-do_handle_tcp(#?STATE{  protocol = Protocol,
-                        socket   = Socket,
-                        parser   = Parser} = State,Data) ->
-  of_driver_utils:setopts(Protocol,Socket,[{active, once}]),
-    case ofp_parser:parse(Parser, Data) of
-        {ok, NewParser, Messages} ->
-            case do_handle_message(Messages,State) of
-                {ok,NewState} ->
-                    {noreply, NewState#?STATE{parser = NewParser}};
-                {stop, Reason, NewState} ->
-                    {stop, Reason, NewState}
-            end;
-        _Else ->
-            close_of_connection(State)
-    end.  
-
-do_handle_message([],NewState) ->
-    {ok,NewState};
-do_handle_message([Message|Rest],NewState) ->
-    case handle_message(Message,NewState) of
-        {stop, Reason, State} ->
-            {stop, Reason, State};
-        NextState ->
-            do_handle_message(Rest,NextState)
-    end.
-
-handle_message(#ofp_message{version = Version,
-                            type    = features_reply,
-                            body    = Body} = _Msg,
-                            #?STATE{connection_init     = false,
-                                    switch_handler      = SwitchHandler,
-                                    switch_handler_opts = Opts,
-                                    address             = IpAddr,
-                                    port                = Port} = State) ->
-    {ok,DatapathInfo} = of_driver_utils:get_datapath_info(Version, Body),
-    NewState = 
-        case Version of
-            3 ->
-                State#?STATE{datapath_info = DatapathInfo};
-            4 ->
-                {ok,AuxID} = of_driver_utils:get_aux_id(Version, Body),
-                handle_datapath(State#?STATE{ datapath_info = DatapathInfo, 
-                                              aux_id        = AuxID })
-        end,
-    ok = of_driver_db:insert_switch_connection(IpAddr, Port, self(),NewState#?STATE.conn_role),
-    {ok, HandlerPid, _HandlerState} = SwitchHandler:init(IpAddr, DatapathInfo, Body, Version, self(), Opts),
-    NewHandlerState = SwitchHandler:handle_connect(HandlerPid,self(),NewState#?STATE.conn_role,NewState#?STATE.aux_id),
-
-
-
-    NewState#?STATE{ handler_pid   = HandlerPid,
-                     handler_state = NewHandlerState };
-% handle_message(Msg, #?STATE{connection_init = true, pending_sync_msg = [] } = State) ->
-
-%     io:format(" PENDING MESSAGE RECEIVED 11 ......................  \n\n",[]),
-
-%     switch_handler_next_state(Msg,State);
-handle_message(Msg, #?STATE{connection_init = true,
-                            pending_sync_msg = PSM } = State) ->
-    #ofp_message{ xid = XID } = Msg,
-    NextState=
-        case lists:keyfind(XID, 1, PSM)  of
-            {XID,Client} ->
-                Result = gen_server:reply(Client, {ok,Msg}),
-                io:format("Result: ~p\n",[Result]),
-                State#?STATE{ pending_sync_msg = lists:keydelete(XID, 1, PSM) };
-            false ->
-                State
-        end,
-    switch_handler_next_state(Msg,NextState).
-
-switch_handler_next_state(Msg,#?STATE{ switch_handler = SwitchHandler,
-                                       handler_pid    = HandlerPid } = State) ->
-    {ok,NewHandlerState} = SwitchHandler:handle_message(Msg,HandlerPid),
-    State#?STATE{handler_state = NewHandlerState}.
-
-handle_datapath(#?STATE{ datapath_info  = DatapathInfo,
-                         aux_id         = AuxID} = State) ->
-    case of_driver_db:lookup_datapath_id(DatapathInfo) of
-        [] when AuxID =:= 0 ->
-            of_driver_db:insert_datapath_id(DatapathInfo,self()),
-            State#?STATE{conn_role       = main,
-                         connection_init = true};
-        [Entry] when AuxID =/= 0 ->
-            of_driver_db:add_aux_id(Entry,DatapathInfo,{AuxID, self()}),
-            State#?STATE{conn_role       = aux,
-                         connection_init = true,
-                         aux_id          = AuxID};
-        _Else ->
-            close_of_connection(State,aux_conflict),
-            State
-    end.
 
 decide_on_version(SupportedVersions, #ofp_message{version = CtrlHighestVersion,
                                                   body    = HelloBody}) ->
@@ -350,7 +359,7 @@ greatest_common_version(ControllerVersions, SwitchVersions) ->
 handle_failed_negotiation(Xid, _Reason, #?STATE{socket        = Socket,
                                                 ctrl_versions = Versions } = State) ->
     send_incompatible_version_error(Xid, Socket, tcp,lists:max(Versions)),
-    close_of_connection(State).
+    close_of_connection(State,failed_version_negotiation).
 
 send_incompatible_version_error(Xid, Socket, Proto, OFVersion) ->
     ErrorMessageBody = create_error(OFVersion, hello_failed, incompatible),

@@ -8,5 +8,4 @@ application:start(lager).
 application:load(of_driver).
 application:start(of_driver).
 %of_driver_tcp_stub:start().
-reloader:start().
 
