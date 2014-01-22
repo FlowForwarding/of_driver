@@ -46,7 +46,8 @@
                  handler_state       :: term(),
                  handler_pid         :: pid(),
                  pending_msgs=[]     :: list({ XIDs :: integer(), OfpMessage :: #ofp_message{} | undefined }),
-                 xid = 0             :: integer()
+                 xid = 0             :: integer(),
+                 startup_leftovers   :: binary()
                }).
 
 %%------------------------------------------------------------------
@@ -148,18 +149,16 @@ handle_info({tcp, Socket, Data},#?STATE{ parser        = undefined,
                                        } = State) ->
     of_driver_utils:setopts(Protocol, Socket, [{active, once}]),
     case of_protocol:decode(<<Buffer/binary, Data/binary>>) of
-        {ok, #ofp_message{xid = Xid, body = #ofp_hello{}} = Hello, _Leftovers} -> %% and do something with Leftovers ... 
+        {ok, #ofp_message{xid = Xid, body = #ofp_hello{}} = Hello, Leftovers} -> 
             case decide_on_version(Versions, Hello) of
                 {failed, Reason} ->
                     handle_failed_negotiation(Xid, Reason, State);
-                Version = 3 -> %% of_msg_lib only currently supports V4... 
+                Version -> %% of_msg_lib only currently supports V4... 
                     {ok, Parser} = ofp_parser:new(Version),
-                    {ok,FeaturesBin} = of_protocol:encode(of_driver_utils:create_features_request(Version)),
-                    send_features_reply(FeaturesBin,State#?STATE{ parser = Parser, version = Version });
-                Version ->
-                    {ok, Parser} = ofp_parser:new(Version),
-                    {ok,FeaturesBin} = of_protocol:encode(of_msg_lib:get_features(Version)),
-                    send_features_reply(FeaturesBin,State#?STATE{ parser = Parser, version = Version })
+                    {ok,FeaturesBin} = of_protocol:encode(create_features_request(Version)),
+                    ok = of_driver_utils:send(Protocol, Socket, FeaturesBin),
+                    %% and do something with Leftovers ( If there are any ... )
+                    {noreply, State#?STATE{ parser = Parser, version = Version, startup_leftovers = Leftovers }}
             end;
         {error, binary_too_small} ->
             {noreply, State#?STATE{hello_buffer = <<Buffer/binary,
@@ -184,12 +183,6 @@ terminate(_Reason,State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-
-%%-----------------------------------------------------------------------------
-
-send_features_reply(FeaturesBin,#?STATE{ socket = Socket, protocol = Protocol } = State) ->
-    ok = of_driver_utils:send(Protocol, Socket, FeaturesBin),
-    {noreply, State}.
 
 %%-----------------------------------------------------------------------------
 
@@ -266,9 +259,9 @@ handle_pending_msg(#ofp_message{ xid = XID, type = barrier_reply } = Msg,#?STATE
         {XID,no_response} -> %% Prevent intentional barrier REPLY's in list of msg's from trying to gen_server:reply
             update_response(XID,Msg,PSM,State);
         {XID,From} ->
-            ReplyListWithBarrier = lists:keyreplace(XID,1,PSM,{XID,Msg}),
+            ReplyListWithoutBarrier = lists:keydelete(XID,1,PSM),
             F = fun({_SomeXID,no_reply}) -> false; ({_SomeXID,#ofp_message{} = _Reply}) -> true end,
-            {ReplyList,PendingList} = lists:partition(F,ReplyListWithBarrier),
+            {ReplyList,PendingList} = lists:partition(F,ReplyListWithoutBarrier),
             gen_server:reply(From, {ok,lists:foldl(fun({_MsgXID,M},Acc) -> [M|Acc] end,[],ReplyList)}),
             State#?STATE{ pending_msgs = PendingList }
     end;
@@ -320,6 +313,11 @@ close_of_connection(#?STATE{ socket        = Socket,
     {stop, normal, State}.
 
 %%-----------------------------------------------------------------------------
+
+create_features_request(3) ->
+    of_driver_utils:create_features_request(3);
+create_features_request(Version) ->
+    of_msg_lib:get_features(Version).
 
 decide_on_version(SupportedVersions, #ofp_message{version = CtrlHighestVersion,
                                                   body    = HelloBody}) ->

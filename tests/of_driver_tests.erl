@@ -1,6 +1,7 @@
 -module (of_driver_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("of_protocol/include/of_protocol.hrl").
 -include_lib("of_driver/include/of_driver_acl.hrl").
 
 %%------------------------------------------------------------------------------
@@ -17,10 +18,22 @@ of_driver_test_() ->
              application:start(mnesia),
              of_driver_db:install(),
 
-			{ok,_Pid1} = of_driver_app:start([],[])
+			{ok,_Pid1} = of_driver_app:start([],[]),
+
+			%% start stub, that mimics LINC ...
+			{ok,_Pid2} = of_driver_tcp_stub:start(),
+
+			IpAddr={127,0,0,1},
+			ok = of_driver:grant_ipaddr(IpAddr,echo_handler,[{enable_ping,false},
+            	        		     					  {ping_timeout,5000},
+                	    								  {ping_idle,5000},
+                    									  {multipart_timeout,30000}]),
+			timer:sleep(500),
+			[[_Port,ConnectionPid,_ConnRole]] = of_driver_switch_connection:lookup_connection_pid(IpAddr)
 
      end,
      fun(_) -> 
+             try gen_server:call(of_driver_tcp_stub,stop) catch _C1:_E1 -> ok end,
              ok
      end,
      {inorder,[
@@ -132,47 +145,59 @@ set_allowed_ipaddrs() ->
 		lists:sort( of_driver:get_allowed_ipaddrs() ) ),
 	ok.
 
-
 send() ->
-	IpAddr={127,0,0,1},
-	ok = of_driver:grant_ipaddr(IpAddr,echo_handler,[{enable_ping,false},
-                    		     					  {ping_timeout,5000},
-                    								  {ping_idle,5000},
-                    								  {multipart_timeout,30000}]),
-	%% start stub, that mimics LINC ...
-	{ok,_Pid} = of_driver_tcp_stub:start(),
-	timer:sleep(500),
-	[[Port,ConnectionPid,ConnRole]] = of_driver_switch_connection:lookup_connection_pid(IpAddr),
+	of_driver_tcp_stub:clear_message_heap(),
+	{ok,[]} = of_driver_tcp_stub:get_message_heap(),
+
 	Msg = of_driver_utils:create_hello(4),
+	[[_Port,ConnectionPid,_ConnRole]] = of_driver_switch_connection:lookup_connection_pid({127,0,0,1}),
 	ok = of_driver:send(ConnectionPid, Msg),
+	timer:sleep(200),
 	% %% ASK STUB FOR MESSAGE BOX...
-	{ok,[{ofp_message,4,features_request,0,{ofp_features_request}},
- 	     {ofp_message,4,hello,0,{ofp_hello,[{versionbitmap,[4,3]}]}}
- 	    ]} = of_driver_tcp_stub:get_message_heap(),
-  	try gen_server:call(of_driver_tcp_stub,stop) catch C1:E1 -> ok end,
+	{ok,[{ofp_message,4,hello,0,{ofp_hello,[{versionbitmap,[4]}]}} 
+	    ]} = of_driver_tcp_stub:get_message_heap(),
  	true.
 
-sync_send() ->
-	true.
-
 send_list() ->
+	of_driver_tcp_stub:clear_message_heap(),
+	{ok,[]} = of_driver_tcp_stub:get_message_heap(),
+
+	Msg = of_driver_utils:create_hello(4),
+	[[_Port,ConnectionPid,_ConnRole]] = of_driver_switch_connection:lookup_connection_pid({127,0,0,1}),
+	ok = of_driver:send_list(ConnectionPid, [Msg,Msg,Msg]),
+	timer:sleep(1000),
+	{ok,[{ofp_message,4,hello,0,{ofp_hello,[{versionbitmap,[4]}]}},
+ 	     {ofp_message,4,hello,0,{ofp_hello,[{versionbitmap,[4]}]}},
+ 	     {ofp_message,4,hello,0,{ofp_hello,[{versionbitmap,[4]}]}}
+ 	    ]} = of_driver_tcp_stub:get_message_heap(),
+  	true.
+
+sync_send() ->
+	of_driver_tcp_stub:clear_message_heap(),
+	[[_Port,ConnectionPid,_ConnRole]] = of_driver_switch_connection:lookup_connection_pid({127,0,0,1}),
+	Msg = of_msg_lib:get_features(4),
+	{ok,[ReplyMsg1]} = of_driver:sync_send(ConnectionPid, Msg),
+	?assertEqual(features_reply,ReplyMsg1#ofp_message.type),
 	true.
 
 sync_send_list() ->
+	of_driver_tcp_stub:clear_message_heap(),
+	[[_Port,ConnectionPid,_ConnRole]] = of_driver_switch_connection:lookup_connection_pid({127,0,0,1}),
+	Msg = of_msg_lib:get_features(4),
+	{ok,[ReplyMsg1,ReplyMsg2]} = of_driver:sync_send_list(ConnectionPid, [Msg,Msg]),
+	?assertEqual(features_reply,ReplyMsg1#ofp_message.type),
+	?assertEqual(features_reply,ReplyMsg2#ofp_message.type),
 	true.
 
 close_connection() ->
 	IpAddr={127,0,0,1},
 	ok = of_driver:grant_ipaddr(IpAddr,echo_handler,[{enable_ping,false},
-                    									  {ping_timeout,5000},
-                    									  {ping_idle,5000},
-                    									  {multipart_timeout,30000}]),
+                    							     {ping_timeout,5000},
+                    								 {ping_idle,5000},
+                    								 {multipart_timeout,30000}]),
 	%% start stub, that mimics LINC ...
-	{ok,_Pid} = of_driver_tcp_stub:start(),
-	timer:sleep(500),
-	[[Port,ConnectionPid,ConnRole]] = of_driver_switch_connection:lookup_connection_pid(IpAddr),
+	[[_Port,ConnectionPid,_ConnRole]] = of_driver_switch_connection:lookup_connection_pid(IpAddr),
 	ok = of_driver:close_connection(ConnectionPid),
- 	try gen_server:call(of_driver_tcp_stub,stop) catch C1:E1 -> ok end,
 	true.
 
 close_ipaddr() ->
