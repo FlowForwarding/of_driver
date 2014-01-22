@@ -23,6 +23,7 @@
         ]).
 
 -define(STATE, of_driver_connection_state).
+-define(NOREPLY,no_reply).
 
 -include_lib("of_protocol/include/of_protocol.hrl").
 -include_lib("of_driver/include/of_driver_acl.hrl").
@@ -108,7 +109,7 @@ handle_call({send,barrier},From,#?STATE{ version  = Version } = State) ->
 handle_call({send,OfpMsg},_From,State) ->
     XID = handle_send(OfpMsg,State),
     {reply,{ok,XID},State#?STATE{ xid          = XID,
-                                  pending_msgs = [{XID,no_response}|State#?STATE.pending_msgs]
+                                  pending_msgs = [{XID,?NOREPLY}|State#?STATE.pending_msgs]
                                  }};
 handle_call(next_xid,_From,#?STATE{ xid = XID } = State) ->
     NextXID = XID + 1,
@@ -259,11 +260,11 @@ handle_message(Msg, #?STATE{connection_init = true,
 
 handle_pending_msg(#ofp_message{ xid = XID, type = barrier_reply } = Msg,#?STATE{ pending_msgs = PSM } = State) ->
     case lists:keyfind(XID, 1, PSM) of 
-        {XID,no_response} -> %% Prevent intentional barrier REPLY's in list of msg's from trying to gen_server:reply
+        {XID,?NOREPLY} -> %% Prevent intentional barrier REPLY's in list of msg's from trying to gen_server:reply
             update_response(XID,Msg,PSM,State);
         {XID,From} ->
             ReplyListWithoutBarrier = lists:keydelete(XID,1,PSM),
-            F = fun({_SomeXID,no_reply}) -> false; ({_SomeXID,#ofp_message{} = _Reply}) -> true end,
+            F = fun({_SomeXID,?NOREPLY}) -> false; ({_SomeXID,#ofp_message{} = _Reply}) -> true end,
             {ReplyList,PendingList} = lists:partition(F,ReplyListWithoutBarrier),
             gen_server:reply(From, {ok,lists:foldl(fun({_MsgXID,M},Acc) -> [M|Acc] end,[],ReplyList)}),
             State#?STATE{ pending_msgs = PendingList }
@@ -272,7 +273,7 @@ handle_pending_msg(#ofp_message{ xid = XID, type = _Type } = Msg,#?STATE{ pendin
     update_response(XID,Msg,PSM,State).
     
 update_response(XID,Msg,PSM,State) ->
-    {XID,no_response} = lists:keyfind(XID, 1, PSM),
+    {XID,?NOREPLY} = lists:keyfind(XID, 1, PSM),
     State#?STATE{ pending_msgs = lists:keyreplace(XID,1,PSM,{XID,Msg}) }.
 
 handle_datapath(#?STATE{ datapath_info = DatapathInfo,
