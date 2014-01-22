@@ -110,6 +110,9 @@ handle_call({send,OfpMsg},_From,State) ->
     {reply,{ok,XID},State#?STATE{ xid          = XID,
                                   pending_msgs = [{XID,no_response}|State#?STATE.pending_msgs]
                                  }};
+handle_call(next_xid,_From,#?STATE{ xid = XID } = State) ->
+    NextXID = XID + 1,
+    {reply,{ok,NextXID},State#?STATE{ xid = NextXID}};
 handle_call(pending_msgs,_From,State) -> %% ***DEBUG
     {reply,{ok,State#?STATE.pending_msgs},State}.
 
@@ -149,7 +152,7 @@ handle_info({tcp, Socket, Data},#?STATE{ parser        = undefined,
                                        } = State) ->
     of_driver_utils:setopts(Protocol, Socket, [{active, once}]),
     case of_protocol:decode(<<Buffer/binary, Data/binary>>) of
-        {ok, #ofp_message{xid = Xid, body = #ofp_hello{}} = Hello, Leftovers} -> 
+        {ok, #ofp_message{xid = Xid, body = #ofp_hello{}} = Hello, Leftovers} ->
             case decide_on_version(Versions, Hello) of
                 {failed, Reason} ->
                     handle_failed_negotiation(Xid, Reason, State);
@@ -236,8 +239,8 @@ handle_message(#ofp_message{version = Version,
     {ok,AuxID} = of_driver_utils:get_aux_id(Version, Body),
     case handle_datapath(State#?STATE{ datapath_info = DatapathInfo, 
                                        aux_id        = AuxID }) of 
-        {stop, Reason, State} ->
-            {stop, Reason, State};
+        {stop, Reason, NewState} ->
+            {stop, Reason, NewState};
         NewState ->
             ok = of_driver_db:insert_switch_connection(IpAddr, Port, self(),NewState#?STATE.conn_role),
             {ok, HandlerPid, _HandlerState} = SwitchHandler:init(IpAddr, DatapathInfo, Body, Version, self(), Opts),
@@ -272,8 +275,8 @@ update_response(XID,Msg,PSM,State) ->
     {XID,no_response} = lists:keyfind(XID, 1, PSM),
     State#?STATE{ pending_msgs = lists:keyreplace(XID,1,PSM,{XID,Msg}) }.
 
-handle_datapath(#?STATE{ datapath_info  = DatapathInfo,
-                         aux_id         = AuxID} = State) ->
+handle_datapath(#?STATE{ datapath_info = DatapathInfo,
+                         aux_id        = AuxID} = State) ->
     case of_driver_db:lookup_datapath_id(DatapathInfo) of
         [] when AuxID =:= 0 ->
             of_driver_db:insert_datapath_id(DatapathInfo,self()),

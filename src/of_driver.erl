@@ -125,9 +125,8 @@ close_connection(ConnectionPid) -> %% ONLY CLOSE CONNECTION, might be main, or a
 
 -spec close_ipaddr(IpAddr :: tuple()) -> ok.
 %% @doc
-close_ipaddr(_IpAddr) -> %% CLOSE ALL CONNECTIONS TO IP ADDRESS
-    %% implement.
-    %% FIND ALL IP ADDRESS CONNECTIONS AND DROP ALL!!!
+close_ipaddr(IpAddr) ->
+    [ close_connection(Pid) || [_Port,Pid,Type] <- of_driver_switch_connection:lookup_connection_pid(IpAddr) ],
     ok.
 
 -spec set_xid(Msg :: #ofp_message{}, Xid :: integer()) -> {ok,#ofp_message{}}.
