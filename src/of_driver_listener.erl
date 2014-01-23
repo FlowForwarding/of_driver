@@ -32,9 +32,11 @@ start_link() ->
     {ok, Pid}.
 
 init(_) ->
-    Port = of_driver_utils:conf_default(listen_port, fun erlang:is_integer/1, 6633),
-    {ok, LSocket} = gen_tcp:listen(Port,
-                [binary, {packet, raw}, {active, false}, {reuseaddr, true}]),
+    Port       = of_driver_utils:conf_default(listen_port, fun erlang:is_integer/1, 6633),
+    ListenOpts = of_driver_utils:conf_default(listen_opts, fun erlang:is_list/1,
+                                              [binary, {packet, raw}, {active, false}, {reuseaddr, true}]),
+    ListenOpts2 = lists:append(ListenOpts,[{ip,{0,0,0,0}}]),
+    {ok, LSocket} = gen_tcp:listen(Port,ListenOpts2),
     {ok, #?STATE{lsock = LSocket}}.
 
 handle_call(_Msg, _From, State) ->
