@@ -63,7 +63,6 @@ handle_call(state,_From,State) ->
     {reply,{ok,State},State};
 handle_call({message, Msg},_From,State) ->
     DecodedMsg = of_msg_lib:decode(Msg),
-    ?INFO("Handling message:~p ... \n",[DecodedMsg]),
     handle_message(self(),undefined,DecodedMsg, State),
     {reply,{ok,State},State};
 handle_call({connect, AuxConn, ConnRole, AuxId} ,_From,#?STATE{aux_conns = AuxConns} = State) ->
@@ -72,10 +71,8 @@ handle_call({connect, AuxConn, ConnRole, AuxId} ,_From,#?STATE{aux_conns = AuxCo
 handle_call({disconnect, AuxConn},_From,#?STATE{aux_conns = AuxConns} = State) ->
     UpdatedState = State#?STATE{aux_conns = lists:deleted(AuxConn, AuxConns)},
     {reply, {ok,UpdatedState}, UpdatedState};
-
 handle_call(listall,_From,State) ->
     {reply,{ok,State#?STATE.aux_conns}, State};
-
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
     
@@ -120,7 +117,5 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-handle_message(_Pid, _Conn, #ofp_message{ type = echo_reply } = _Msg, #?STATE{xid = _Xid} = State) ->
-    {ok, State};
 handle_message(_Pid, _Conn, _Msg, State) ->
     {ok, State}.
