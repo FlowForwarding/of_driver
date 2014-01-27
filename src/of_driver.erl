@@ -54,9 +54,10 @@ grant_ipaddr(IpAddr, SwitchHandler, Opts) ->
 -spec revoke_ipaddr(IpAddr :: inet:ip_address()) -> ok | {error, einval}.
 %% @doc
 revoke_ipaddr(IpAddr) -> 
-    %% TODO: Closes any existing connections from IpAddr and calls
-    %% appropriate callbacks.  Does nothing if IpAddr was not in the
-    %% allowed list.
+    case of_driver_switch_connection:lookup_connection_pid({10,151,1,50}) of 
+        []      -> ok;
+        Entries -> lists:foreach(fun([_Port,Pid,_ConnType]) -> close_connection(Pid) end,Entries)
+    end,
     of_driver_db:revoke_ipaddr(IpAddr).
 
 -spec get_allowed_ipaddrs() -> [] | [allowance()].
