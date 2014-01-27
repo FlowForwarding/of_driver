@@ -17,9 +17,4 @@ remove_switch_connection(IpAddr,Port) ->
 	ok.
 
 lookup_connection_pid(IpAddr) ->
-	case ets:match(?SWITCH_CONN_TBL,{{IpAddr,'$1'},'$2','$3'}) of
-		[] ->
-			[];
-		Items ->
-			Items
-	end.
+	ets:match(?SWITCH_CONN_TBL,{{IpAddr,'$1'},'$2','$3'}).

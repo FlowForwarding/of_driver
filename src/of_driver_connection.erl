@@ -29,38 +29,38 @@
 -include_lib("of_driver/include/of_driver_acl.hrl").
 -include_lib("of_driver/include/of_driver_logger.hrl").
 
--record(?STATE,{ switch_handler      :: atom(),
-                 switch_handler_opts :: list(),
-                 socket              :: inet:socket(),
-                 ctrl_versions       :: list(),
-                 version             :: integer(),
-                 pid                 :: pid(),
-                 address             :: inet:ip_address(),
-                 port                :: port(),
-                 parser              :: #ofp_parser{},
-                 hello_buffer = <<>> :: binary(),
-                 protocol            :: tcp | ssl,
-                 conn_role = main    :: main | aux,
-                 aux_id              :: integer(),
-                 datapath_info       :: { DatapathId :: integer(), DatapathMac :: term() },
-                 connection_init     :: boolean(),
-                 handler_state       :: term(),
-                 handler_pid         :: pid(),
-                 pending_msgs=[]     :: list({ XIDs :: integer(), OfpMessage :: #ofp_message{} | undefined }),
-                 xid = 0             :: integer(),
-                 startup_leftovers   :: binary()
+-record(?STATE,{ switch_handler          :: atom(),
+                 switch_handler_opts     :: list(),
+                 socket                  :: inet:socket(),
+                 ctrl_versions           :: list(),
+                 version                 :: integer(),
+                 pid                     :: pid(),
+                 address                 :: inet:ip_address(),
+                 port                    :: port(),
+                 parser                  :: #ofp_parser{},
+                 hello_buffer = <<>>     :: binary(),
+                 protocol                :: tcp | ssl,
+                 conn_role = main        :: main | aux,
+                 aux_id = 0              :: integer(),
+                 datapath_info           :: { DatapathId :: integer(), DatapathMac :: term() },
+                 connection_init = false :: boolean(),
+                 handler_state           :: term(),
+                 handler_pid             :: pid(),
+                 pending_msgs=[]         :: list({ XIDs :: integer(), OfpMessage :: #ofp_message{} | undefined }),
+                 xid = 0                 :: integer(),
+                 startup_leftovers       :: binary()
                }).
 
 %%------------------------------------------------------------------
 
 sync_call(ConnectionPid,Msgs) when is_list(Msgs) ->
     lists:foreach(fun(Msg) -> 
-                    {ok,_XID} = gen_server:call(ConnectionPid,{send,Msg}) 
+                    {ok,_XID} = gen_server:call(ConnectionPid,{send,Msg},infinity) %% TODO, work on timeout scenarion
                   end, Msgs),
-    gen_server:call(ConnectionPid,{send,barrier});
+    gen_server:call(ConnectionPid,{send,barrier},infinity);
 sync_call(ConnectionPid,Msg) ->
-    {ok,_XID} = gen_server:call(ConnectionPid,{send,Msg}),
-    gen_server:call(ConnectionPid,{send,barrier}).
+    {ok,_XID} = gen_server:call(ConnectionPid,{send,Msg},infinity), %% TODO, work on timeout scenarion
+    gen_server:call(ConnectionPid,{send,barrier},infinity).
 
 %%------------------------------------------------------------------
 
@@ -68,31 +68,29 @@ start_link(Socket) ->
     gen_server:start_link(?MODULE, [Socket], []).
 
 init([Socket]) ->
+    Protocol = tcp,
+    of_driver_utils:setopts(Protocol, Socket, [{active, once}]),
     process_flag(trap_exit, true),
     {ok, {Address, Port}} = inet:peername(Socket),
     case of_driver:allowed_ipaddr(Address) of
         {true, #?ACL_TBL{switch_handler = SwitchHandler,
                          opts           = Opts } = _Entry} ->
-            ?INFO("Connected to Switch on ~p:~p. Connection : ~p \n",[Address, Port, self()]),
+            ?INFO("Connected to Switch on ~s:~p. Connection : ~p \n",[inet_parse:ntoa(Address), Port, self()]),
             Versions = of_driver_utils:conf_default(of_compatible_versions, fun erlang:is_list/1, [3, 4]),
-            Protocol = tcp,
-            of_driver_utils:setopts(Protocol, Socket, [{active, once}]),
             ok = gen_server:cast(self(),{send,hello}),
             {ok, #?STATE{ switch_handler      = SwitchHandler,
                           switch_handler_opts = Opts,
                           socket              = Socket,
                           ctrl_versions       = Versions,
                           protocol            = Protocol,
-                          aux_id              = 0,
-                          connection_init     = false,
                           address             = Address,
                           port                = Port
                         }};
         false ->
             terminate_connection(Socket),
             ?WARNING("Rejecting connection - "
-                    "IP Address not allowed ipaddr(~p) port(~p)\n",
-                                                        [Address, Port]),
+                    "IP Address not allowed ipaddr(~s) port(~p)\n",
+                                                        [inet_parse:ntoa(Address), Port]),
             ignore
     end.
 
@@ -115,7 +113,9 @@ handle_call(next_xid,_From,#?STATE{ xid = XID } = State) ->
     NextXID = XID + 1,
     {reply,{ok,NextXID},State#?STATE{ xid = NextXID}};
 handle_call(pending_msgs,_From,State) -> %% ***DEBUG
-    {reply,{ok,State#?STATE.pending_msgs},State}.
+    {reply,{ok,State#?STATE.pending_msgs},State};
+handle_call(state,_From,State) ->
+    {reply,{ok,State},State}.
 
 handle_send(Msg,#?STATE{ protocol = Protocol,
                          socket   = Socket,
@@ -164,6 +164,9 @@ handle_info({tcp, Socket, Data},#?STATE{ parser        = undefined,
                     %% and do something with Leftovers ( If there are any ... )
                     {noreply, State#?STATE{ parser = Parser, version = Version, startup_leftovers = Leftovers }}
             end;
+        {ok, #ofp_message{xid = Xid, body = _Body} = Msg, Leftovers} ->
+            ?WARNING("DROP INCOMMING MSG (~p). Initial switch-to-controller hello handshake not completed.\n",[Msg]),
+            {noreply,State#?STATE{startup_leftovers = Leftovers}}; %% TODO: maybe hello could be second in leftovers.
         {error, binary_too_small} ->
             {noreply, State#?STATE{hello_buffer = <<Buffer/binary,
                                                     Data/binary>>}};
@@ -213,21 +216,6 @@ do_handle_message([Message|Rest],NewState) ->
             do_handle_message(Rest,NextState)
     end.
 
-handle_message(#ofp_message{version = Version = 3,
-                            type    = features_reply,
-                            body    = Body} = _Msg,
-                            #?STATE{connection_init     = false,
-                                    switch_handler      = SwitchHandler,
-                                    switch_handler_opts = Opts,
-                                    address             = IpAddr,
-                                    port                = Port} = State) ->
-    {ok,DatapathInfo} = of_driver_utils:get_datapath_info(Version, Body),
-    NewState = State#?STATE{datapath_info = DatapathInfo},
-    ok = of_driver_db:insert_switch_connection(IpAddr, Port, self(),NewState#?STATE.conn_role),
-    {ok, HandlerPid, _HandlerState} = SwitchHandler:init(IpAddr, DatapathInfo, Body, Version, self(), Opts),
-    NewHandlerState = SwitchHandler:handle_connect(HandlerPid,self(),NewState#?STATE.conn_role,NewState#?STATE.aux_id),
-    NewState#?STATE{ handler_pid   = HandlerPid,
-                     handler_state = NewHandlerState };
 handle_message(#ofp_message{version = Version,
                             type    = features_reply,
                             body    = Body} = _Msg,
@@ -237,24 +225,34 @@ handle_message(#ofp_message{version = Version,
                                     address             = IpAddr,
                                     port                = Port} = State) ->
     {ok,DatapathInfo} = of_driver_utils:get_datapath_info(Version, Body),
-    {ok,AuxID} = of_driver_utils:get_aux_id(Version, Body),
-    case handle_datapath(State#?STATE{ datapath_info = DatapathInfo, 
-                                       aux_id        = AuxID }) of 
-        {stop, Reason, NewState} ->
-            {stop, Reason, NewState};
-        NewState ->
-            ok = of_driver_db:insert_switch_connection(IpAddr, Port, self(),NewState#?STATE.conn_role),
-            {ok, HandlerPid, _HandlerState} = SwitchHandler:init(IpAddr, DatapathInfo, Body, Version, self(), Opts),
-            NewHandlerState = SwitchHandler:handle_connect(HandlerPid,self(),NewState#?STATE.conn_role,NewState#?STATE.aux_id),
-            NewState#?STATE{ handler_pid   = HandlerPid,
-                             handler_state = NewHandlerState }
+    NewState1 = State#?STATE{datapath_info = DatapathInfo},
+    NewState2 = case Version of
+        3 ->
+            NewState1;
+        _ ->
+            {ok,AuxID} = of_driver_utils:get_aux_id(Version, Body),
+            NewState1#?STATE{aux_id = AuxID}
+    end,
+    case handle_datapath(NewState2) of 
+        {stop, Reason, NewState4} ->
+            {stop, Reason, NewState4};
+        NewState3 ->
+            ok = of_driver_db:insert_switch_connection(IpAddr, Port, self(),NewState3#?STATE.conn_role),
+            {ok, HandlerPid} = SwitchHandler:init(IpAddr, DatapathInfo, Body, Version, self(), Opts),
+            {ok,NewHandlerState} = SwitchHandler:handle_connect(HandlerPid,self(),NewState3#?STATE.conn_role,NewState3#?STATE.aux_id),
+            NewState3#?STATE{ handler_pid     = HandlerPid,
+                              handler_state   = NewHandlerState,
+                              connection_init = true }
     end;
+handle_message(#ofp_message{ type = Type } = Msg, #?STATE{connection_init = false} = State) -> %% TODO: possibly queue/store these messages...
+    ?WARNING("Features Reply startup not completed. Not handingling incomming message ~p\n",[Msg]),
+    State;
 
 handle_message(Msg, #?STATE{connection_init = true,
-                            pending_msgs = [] } = State) ->
+                            pending_msgs    = [] } = State) ->
     switch_handler_next_state(Msg,State);
 handle_message(Msg, #?STATE{connection_init = true,
-                            pending_msgs = _PSM } = State) ->
+                            pending_msgs    = _PSM } = State) ->
     NextState=handle_pending_msg(Msg,State),
     switch_handler_next_state(Msg,NextState).
 
@@ -278,18 +276,16 @@ update_response(XID,Msg,PSM,State) ->
 
 handle_datapath(#?STATE{ datapath_info = DatapathInfo,
                          aux_id        = AuxID} = State) ->
-    case of_driver_db:lookup_datapath_id(DatapathInfo) of
+    case of_driver_db:lookup_datapath_info(DatapathInfo) of
         [] when AuxID =:= 0 ->
-            of_driver_db:insert_datapath_id(DatapathInfo,self()),
-            State#?STATE{conn_role       = main,
-                         connection_init = true};
+            of_driver_db:insert_datapath_info(DatapathInfo,self()),
+            State#?STATE{conn_role = main };
         [] when AuxID =/= 0 ->
             close_of_connection(State,aux_conflict);
         [Entry] when AuxID =/= 0 ->
             of_driver_db:add_aux_id(Entry,DatapathInfo,{AuxID, self()}),
-            State#?STATE{conn_role       = aux,
-                         connection_init = true,
-                         aux_id          = AuxID};
+            State#?STATE{conn_role = aux,
+                         aux_id    = AuxID};
         _ ->
             close_of_connection(State,aux_conflict)
     end.
@@ -309,7 +305,7 @@ close_of_connection(#?STATE{ socket        = Socket,
                              address       = Address,
                              port          = Port } = State, Reason) ->
     ok = gen_server:cast(HandlerPid,close_connection),
-    of_driver_db:remove_datapath_id(ConnRole,DatapathInfo,AuxID),   
+    of_driver_db:remove_datapath_info(ConnRole,DatapathInfo,AuxID),   
     ok = of_driver_db:remove_switch_connection(Address, Port),
     ok = terminate_connection(Socket),
     ?WARNING("connection terminated: datapathid(~p) aux_id(~p) reason(~p)\n",

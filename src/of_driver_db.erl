@@ -21,12 +21,13 @@
           revoke_ipaddr/1,
           get_allowed_ipaddrs/0
         ]).
--export([ insert_datapath_id/2,
-          remove_datapath_id/3,
-          remove_datapath_id/1,
+-export([ insert_datapath_info/2,
+          remove_datapath_info/3,
+          remove_datapath_info/1,
           remove_datapath_aux_id/2,
-          lookup_datapath_id/1,
-          add_aux_id/3
+          lookup_datapath_info/1,
+          add_aux_id/3,
+          lookup_datapath_id/1
         ]).
 -export([ insert_switch_connection/4,
           remove_switch_connection/2,
@@ -93,22 +94,22 @@ get_allowed_ipaddrs() ->
 
 %%--- Datapath ID/Mac -----------------------------------------------------
 
--spec insert_datapath_id(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, ConnPID :: pid()) -> boolean().
+-spec insert_datapath_info(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, ConnPID :: pid()) -> boolean().
 %% @doc
-insert_datapath_id(DatapathInfo, ConnPID) ->
-    of_driver_datapath:insert_datapath_id(DatapathInfo, ConnPID).
+insert_datapath_info(DatapathInfo, ConnPID) ->
+    of_driver_datapath:insert_datapath_info(DatapathInfo, ConnPID).
 
--spec remove_datapath_id(atom(), DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, AuxId :: integer() ) -> ok.
+-spec remove_datapath_info(atom(), DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, AuxId :: integer() ) -> ok.
 % @doc
-remove_datapath_id(main,DatapathInfo,_) ->
-    remove_datapath_id(DatapathInfo);
-remove_datapath_id(aux,DatapathInfo,AuxId) ->
+remove_datapath_info(main,DatapathInfo,_) ->
+    remove_datapath_info(DatapathInfo);
+remove_datapath_info(aux,DatapathInfo,AuxId) ->
     remove_datapath_aux_id(DatapathInfo,AuxId).
 
--spec remove_datapath_id(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }) -> boolean().
+-spec remove_datapath_info(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }) -> boolean().
 %% @doc
-remove_datapath_id(DatapathInfo) ->
-  of_driver_datapath:remove_datapath_id(DatapathInfo).
+remove_datapath_info(DatapathInfo) ->
+  of_driver_datapath:remove_datapath_info(DatapathInfo).
 
 -spec remove_datapath_aux_id(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }, AuxID :: integer()) -> boolean().
 %% @doc
@@ -120,10 +121,15 @@ remove_datapath_aux_id(DatapathInfo, AuxID) ->
 add_aux_id(Entry,DatapathInfo, Aux) ->
   of_driver_datapath:add_aux_id(Entry, DatapathInfo, Aux).
         
--spec lookup_datapath_id(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }) -> list().
+-spec lookup_datapath_info(DatapathInfo :: { DatapathId :: integer(), DatapathMac :: term() }) -> list().
 %% @doc
-lookup_datapath_id(DatapathInfo) ->
-  of_driver_datapath:lookup_datapath_id(DatapathInfo).
+lookup_datapath_info(DatapathInfo) ->
+  of_driver_datapath:lookup_datapath_info(DatapathInfo).
+
+-spec lookup_datapath_id(DatapathId :: integer()) -> [] | list().
+% @doc
+lookup_datapath_id(DatapathId) ->
+    of_driver_db:lookup_datapath_id(DatapathId).
 
 %%--- Switch Connection -----------------------------------------------------
 

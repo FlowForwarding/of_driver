@@ -52,6 +52,4 @@ init(IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts) ->
   init_handler(IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts).
 
 init_handler(IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts) ->
-    {ok, Pid} = echo_logic:start_link(IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts),
-    {ok,HandlerState} = gen_server:call(Pid,state),
-    {ok,Pid,HandlerState}.
+    {ok, _Pid} = echo_logic:start_link(IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts).

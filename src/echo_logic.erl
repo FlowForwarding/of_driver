@@ -117,5 +117,6 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-handle_message(_Pid, _Conn, _Msg, State) ->
+handle_message(_Pid, _Conn, Msg, State) ->
+    ?INFO("HANDLE OFP MESSAGE ~p\n",[Msg]),
     {ok, State}.
