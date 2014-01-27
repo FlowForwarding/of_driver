@@ -51,6 +51,10 @@ install_try() ->
     application:start(mnesia),
     ok = of_driver_acl:create_table([node()]),
     ok = mnesia:wait_for_tables([of_driver_acl],infinity),
+
+    %% NOTE: just allowing ANY connection in the interim...
+    of_driver:grant_ipaddr(any),
+
     lists:foreach(fun(Tbl) -> install_try_ets(Tbl) end,
                   [?DATAPATH_TBL, ?SWITCH_CONN_TBL]).
 
