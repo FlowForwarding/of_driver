@@ -45,7 +45,6 @@
                  datapath_info           :: { DatapathId :: integer(), DatapathMac :: term() },
                  connection_init = false :: boolean(),
                  handler_state           :: term(),
-                 handler_pid             :: pid(),
                  pending_msgs=[]         :: list({ XIDs :: integer(), OfpMessage :: #ofp_message{} | undefined }),
                  xid = 0                 :: integer(),
                  startup_leftovers       :: binary()
@@ -184,7 +183,8 @@ handle_info({tcp_error, _Socket, _Reason},State) ->
 
 %%------------------------------------------------------------------
 
-terminate(_Reason,State) ->
+terminate(Reason,State) ->
+    ?INFO("[~p] Reason : ~p ... \n",[?MODULE,Reason]),
     close_of_connection(State,gen_server_terminate),
     ok.
 
@@ -218,30 +218,30 @@ do_handle_message([Message|Rest],NewState) ->
 
 handle_message(#ofp_message{version = Version,
                             type    = features_reply,
-                            body    = Body} = _Msg,
+                            body    = Features} = _Msg,
                             #?STATE{connection_init     = false,
                                     switch_handler      = SwitchHandler,
                                     switch_handler_opts = Opts,
                                     address             = IpAddr,
                                     port                = Port} = State) ->
-    {ok,DatapathInfo} = of_driver_utils:get_datapath_info(Version, Body),
+    {ok,DatapathInfo} = of_driver_utils:get_datapath_info(Version,Features),
     NewState1 = State#?STATE{datapath_info = DatapathInfo},
     NewState2 = case Version of
         3 ->
             NewState1;
         _ ->
-            {ok,AuxID} = of_driver_utils:get_aux_id(Version, Body),
+            {ok,AuxID} = of_driver_utils:get_aux_id(Version, Features),
             NewState1#?STATE{aux_id = AuxID}
     end,
-    case handle_datapath(NewState2) of 
+    {ok, HandlerState} = SwitchHandler:init(IpAddr, DatapathInfo, Features, Version, self(), Opts),
+    case handle_datapath(NewState2#?STATE{ handler_state = HandlerState }) of 
         {stop, Reason, NewState4} ->
             {stop, Reason, NewState4};
         NewState3 ->
             ok = of_driver_db:insert_switch_connection(IpAddr, Port, self(),NewState3#?STATE.conn_role),
-            {ok, HandlerPid} = SwitchHandler:init(IpAddr, DatapathInfo, Body, Version, self(), Opts),
-            {ok,NewHandlerState} = SwitchHandler:handle_connect(HandlerPid,self(),NewState3#?STATE.conn_role,NewState3#?STATE.aux_id),
-            NewState3#?STATE{ handler_pid     = HandlerPid,
-                              handler_state   = NewHandlerState,
+            {ok,NewHandlerState} = SwitchHandler:handle_connect(IpAddr, DatapathInfo, Features,
+                                                               Version, self(), NewState3#?STATE.aux_id, Opts),
+            NewState3#?STATE{ handler_state   = NewHandlerState,
                               connection_init = true }
     end;
 handle_message(#ofp_message{ type = Type } = Msg, #?STATE{connection_init = false} = State) -> %% TODO: possibly queue/store these messages...
@@ -291,8 +291,9 @@ handle_datapath(#?STATE{ datapath_info = DatapathInfo,
     end.
 
 switch_handler_next_state(Msg,#?STATE{ switch_handler = SwitchHandler,
-                                       handler_pid    = HandlerPid } = State) ->
-    {ok,NewHandlerState} = SwitchHandler:handle_message(Msg,HandlerPid),
+                                       handler_state = HandlerState
+                                       } = State) ->
+    {ok,NewHandlerState} = SwitchHandler:handle_message(Msg,HandlerState),
     State#?STATE{handler_state = NewHandlerState}.
 
 %%-----------------------------------------------------------------------------
@@ -301,12 +302,14 @@ close_of_connection(#?STATE{ socket        = Socket,
                              datapath_info = DatapathInfo,
                              conn_role     = ConnRole,
                              aux_id        = AuxID,
-                             handler_pid   = HandlerPid,
                              address       = Address,
-                             port          = Port } = State, Reason) ->
-    ok = gen_server:cast(HandlerPid,close_connection),
+                             port          = Port,
+                             switch_handler= SwitchHandler,
+                             handler_state = HandlerState } = State, Reason) ->
     of_driver_db:remove_datapath_info(ConnRole,DatapathInfo,AuxID),   
     ok = of_driver_db:remove_switch_connection(Address, Port),
+    io:format("\n\n[HANDLE DISCONNECT] HandlerState : ~p\n",[HandlerState]),
+    SwitchHandler:handle_disconnect(close_connection,HandlerState),
     ok = terminate_connection(Socket),
     ?WARNING("connection terminated: datapathid(~p) aux_id(~p) reason(~p)\n",
                             [DatapathInfo, AuxID, Reason]),

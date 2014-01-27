@@ -9,114 +9,236 @@
 -module(echo_logic).
 -copyright("2013, Erlang Solutions Ltd.").
 
--behaviour(gen_server).
-
--export([start_link/6, listall/1]).
-
--export([   
-        init/1,
-        handle_call/3,
-        handle_cast/2,
-        handle_info/2,
-        terminate/2,
-        code_change/3
-        ]).
-
--define(STATE,echo_logic_state).
-
--include_lib("of_protocol/include/of_protocol.hrl").
+-include_lib("of_driver/include/echo_handler_logic.hrl").
 -include_lib("of_driver/include/of_driver_logger.hrl").
 
--record(?STATE, { version,
-                  conn,
-                  aux_conns = [],
-                  xid,
-                  ip_address,
-                  datapath_id,
-                  features_reply,
-                  opts,
-                  loop_ref
-                }).
+-behaviour(gen_server).
+-define(SERVER, ?MODULE).
 
-listall(Pid) ->
-  gen_server:call(Pid,listall).
+-define(STATE,echo_logic_state).
+-record(?STATE,
+    {
+        ipaddr,
+        datapath_id,
+        features,
+        of_version,
+        main_connection,
+        aux_connections,
+        callback_module,
+        callback_state,
+        generation_id,
+        opt
+    }
+).
 
-start_link(IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts) ->
-    gen_server:start_link(?MODULE, [IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts], []).
+%% ------------------------------------------------------------------
+%% API Function Exports
+%% ------------------------------------------------------------------
 
-init([IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts]) ->
-    case of_driver_utils:proplist_default(enable_ping, Opts, false) of
-        true ->
-            gen_server:cast(self(), ping);
-        false ->
-            ok
+-export([start_link/1]).
+-export([
+    ofd_find_handler/1,
+    ofd_init/7,
+    ofd_connect/8,
+    ofd_message/3,
+    ofd_error/3,
+    ofd_disconnect/3,
+    ofd_terminate/3
+]).
+
+%% ------------------------------------------------------------------
+%% gen_server Function Exports
+%% ------------------------------------------------------------------
+
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2,
+         terminate/2, code_change/3]).
+
+%% ------------------------------------------------------------------
+%% API Function Definitions
+%% ------------------------------------------------------------------
+
+start_link(DatapathId) ->
+    gen_server:start_link(?MODULE, [DatapathId], []).
+
+ofd_find_handler(DatapathId) ->
+    P=case ets:lookup(?ECHO_HANDLER_TBL, DatapathId) of
+        [] ->
+            {ok, Pid} = echo_logic:start_link(DatapathId),
+            % XXX put code to remove the entry in ets somewhere.
+            true = ets:insert_new(?ECHO_HANDLER_TBL,#echo_handlers_table{
+                                                   datapath_id = DatapathId,
+                                                   handler_pid = Pid}),
+            Pid;
+        [Handler = #echo_handlers_table{}] ->
+            Handler#echo_handlers_table.handler_pid
     end,
-    {ok, #?STATE{version        = Version, 
-                 conn           = Conn,
-                 ip_address     = IpAddr,
-                 datapath_id    = DatapathInfo,
-                 features_reply = FeaturesReply,
-                 opts           = Opts
-                }}.
+    {ok,P}.
 
-handle_call(state,_From,State) ->
-    {reply,{ok,State},State};
-handle_call({message, Msg},_From,State) ->
-    DecodedMsg = of_msg_lib:decode(Msg),
-    handle_message(self(),undefined,DecodedMsg, State),
-    {reply,{ok,State},State};
-handle_call({connect, AuxConn, ConnRole, AuxId} ,_From,#?STATE{aux_conns = AuxConns} = State) ->
-    UpdatedState = State#?STATE{aux_conns = [{AuxConn, ConnRole, AuxId} | AuxConns]},
-    {reply, {ok,UpdatedState}, UpdatedState};
-handle_call({disconnect, AuxConn},_From,#?STATE{aux_conns = AuxConns} = State) ->
-    UpdatedState = State#?STATE{aux_conns = lists:deleted(AuxConn, AuxConns)},
-    {reply, {ok,UpdatedState}, UpdatedState};
-handle_call(listall,_From,State) ->
-    {reply,{ok,State#?STATE.aux_conns}, State};
-handle_call(_Request, _From, State) ->
+ofd_init(Pid, IpAddr, DatapathId, Features, Version, Connection, Opt) ->
+    gen_server:call(Pid,
+            {init, IpAddr, DatapathId, Features, Version, Connection, Opt}).
+
+ofd_connect(Pid, IpAddr, DatapathId, Features, Version, Connection, AuxId, Opt) ->
+    gen_server:call(Pid,
+            {connect, IpAddr, DatapathId, Features, Version, Connection, AuxId, Opt}).
+
+ofd_message(Pid, Connection, Msg) ->
+    gen_server:call(Pid, {message, Connection, Msg}).
+
+ofd_error(Pid, Connection, Error) ->
+    gen_server:call(Pid, {error, Connection, Error}).
+
+ofd_disconnect(Pid, Connection, Reason) ->
+    gen_server:call(Pid, {disconnect, Connection, Reason}).
+
+ofd_terminate(Pid, Connection, Reason) ->
+    gen_server:call(Pid, {terminate_from_driver, Connection, Reason}).
+
+%% ------------------------------------------------------------------
+%% gen_server Function Definitions
+%% ------------------------------------------------------------------
+
+init([DatapathId]) ->
+    gen_server:cast(self(), init),
+    {ok, #?STATE{datapath_id = DatapathId}}.
+
+% handle callbacks from of_driver
+handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt}, _From, 
+    State = #?STATE{datapath_id = DatapathId}) ->
+    % switch connected to of_driver.
+    % this is the main connection.
+    State1 = State#?STATE{
+        ipaddr = IpAddr,
+        features = Features,
+        of_version = Version,
+        main_connection = Connection,
+        aux_connections = [],
+        callback_module = get_opt(callback_module, Opt),
+        opt = Opt
+    },
+    {reply, {ok, self()}, State1};
+
+handle_call(terminate, _From, State) ->
+    {reply, ok, State};
+handle_call({connect, _IpAddr, _DatapathId, _Features, _Version, Connection, AuxId, _Opt}, _From, State = #?STATE{aux_connections = AuxConnections}) ->
+    State1 = State#?STATE{aux_connections = [{AuxId, Connection} | AuxConnections]},
+    % switch connected to of_driver.
+    % this is an auxiliary connection.
+    {reply, {ok, self()}, State1};
+handle_call({message, _Connection, _Message}, _From, State) ->
+    ?INFO("Got message from Driver...\n"),
+    % switch sent us a message
+    {reply, ok, State};
+handle_call({error, _Connection, _Reason}, _From, State) ->
+    % error on the connection
+    {reply, ok, State};
+handle_call({disconnect, Connection, Reason}, _From, 
+    #?STATE{ datapath_id = DatapathId } = State) ->
+    % lost an auxiliary connection
+    ets:delete(?ECHO_HANDLER_TBL,DatapathId),
+    {reply, ok, State};
+handle_call({terminate_from_driver, Connection, Reason}, _From, State) ->
+    % lost the main connection
+    {stop, terminated_from_driver, ok, State};
+handle_call(Request, _From, State) ->
+    ?WARNING("\n\n !!!!!!!!!! Handling UNHANDLED handle_call [Request : ~p]",[Request]),
+    % unknown request
     {reply, ok, State}.
-    
-handle_cast({message, Msg}, State) ->
-    DecodedMsg = of_msg_lib:decode(Msg),
-    handle_message(self(),undefined,DecodedMsg, State),
-    {noreply, State};
-handle_cast(ping, #?STATE{opts = Opts} = State) ->
-    case of_driver_utils:proplist_default(enable_ping, Opts, false) of
-        true ->
-            Timeout = of_driver_utils:proplist_default(ping_timeout, Opts, 10000),
-            {ok,TRef} = timer:apply_after(Timeout, gen_server, cast, [self(),do_ping]),
-            {noreply,State#?STATE{loop_ref=TRef}};
-        false ->
-            {noreply,State}
-    end;
-handle_cast(do_ping, #?STATE{conn    = Conn, 
-                             version = Version } = State) ->
-    ?INFO(" sending ping_request to switch from handler (~p) ... \n",[self()]),
-    {ok,Xid} = of_driver:gen_xid(Conn),
-    {ok,EchoRequest} = of_driver:set_xid(of_msg_lib:echo_request(Version, <<1,2,3,4,5,6,7>>),Xid),
-    of_driver:send(Conn, EchoRequest),
-    gen_server:cast(self(),ping),
-    {noreply, State#?STATE{xid = Xid}};
-handle_cast(close_connection,#?STATE{ loop_ref = TRef, opts = Opts } = State) ->
-    case of_driver_utils:proplist_default(enable_ping, Opts, false) of
-        true ->
-            {ok, cancel} = timer:cancel(TRef);
-        false ->
-            ok 
-    end,
-    {stop, no_connection, State#?STATE{conn = undefined, aux_conns = []}};
-handle_cast(_Msg, State) ->
+
+% needs an initialization path that does not include a connection
+% two states - connected and not_connected
+handle_cast(init, State) ->
+    % callback module from opts
+    Module = get_opt(callback_module),
+
+    % controller peer from opts
+    Peer = get_opt(peer),
+
+    % callback module options
+    ModuleOpts = get_opt(callback_opts),
+
+    % find out if this controller is active or standby
+    Mode = my_controller_mode(Peer),
+
+    State1 = State#?STATE{
+    },
+    {noreply, State1};
+
+handle_cast(Msg, State) ->
+    ?WARNING("\n\n !!!!!!!!!! Handling UNHANDLED handle_cast [Msg : ~p]",[Msg]),
     {noreply, State}.
 
-handle_info(_Info, State) ->
+handle_info(Info, State) ->
+    ?WARNING("\n\n !!!!!!!!!! Handling UNHANDLED handle_info [Info : ~p]",[Info]),
     {noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(Reason, #?STATE{ main_connection = MainConn,
+                           callback_state = CallbackState,
+                           callback_module = Module}) ->
+    % remove self from datapath id map to avoid getting disconnect callbacks
+    ?WARNING("\n\n !!!!!!!!!! HandlerLogic : ~p",[Reason]),
+    %% of_driver:close_connection(MainConn),
+    do_callback(Module, terminate, [CallbackState]),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-handle_message(_Pid, _Conn, Msg, State) ->
-    ?INFO("HANDLE OFP MESSAGE ~p\n",[Msg]),
+%% ------------------------------------------------------------------
+%% Internal Function Definitions
+%% ------------------------------------------------------------------
+
+do_callback(Module, Function, Args) ->
+    erlang:apply(Module, Function, Args).
+
+tell_controller_mode(Connection, active, State = #?STATE{
+                                            generation_id = GenId,
+                                            main_connection = Connection,
+                                            of_version = Version}) ->
+    Msg = ofs_msg_lib:set_role(Version, master, GenId),
+    State1 = State#?STATE{generation_id = next_generation_id(GenId)},
+    case of_driver:sync_send(Connection, Msg) of
+        {error, Reason} ->
+            {error, Reason, State1};
+        {ok, _Reply} ->
+            {ok, State1}
+    end;
+tell_controller_mode(_Connection, standby, _State) ->
+    ok.
+
+next_generation_id(GenId) ->
+    GenId + 1.
+
+get_opt(Key) ->
+    get_opt(Key, []).
+
+get_opt(Key, Options) ->
+    Default = case application:get_env(echo_handler, Key) of
+        {ok, V} -> V;
+        undefined -> undefined
+    end,
+    proplists:get_value(Key, Options, Default).
+
+my_controller_mode(_Peer) ->
+    active.
+
+tell_standby(generation_id, State) ->
     {ok, State}.
+
+sync_send(MsgFn, State) ->
+    sync_send(MsgFn, [], State).
+
+sync_send(MsgFn, Args, State) ->
+    Conn = State#?STATE.main_connection,
+    Version = State#?STATE.of_version,
+    case of_driver:sync_send(Conn,
+                            apply(of_msg_lib, MsgFn, [Version | Args])) of
+        {ok, noreply} ->
+            noreply;
+        {ok, Reply} ->
+            {Name, _Xid, Res} = of_msg_lib:decode(Reply),
+            {Name, Res};
+        Error ->
+            % {error, Reason}
+            Error
+    end.

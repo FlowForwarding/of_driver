@@ -8,48 +8,62 @@
 -module(echo_handler).
 -copyright("2013, Erlang Solutions Ltd.").
 
--define(STATE,echo_handler_state).
+-include_lib("of_driver/include/of_driver_logger.hrl").
+-include_lib("of_driver/include/echo_handler_logic.hrl").
 
--export([setup/1,
-         state/1,
-         init/6,
-         init_handler/6,
-         handle_connect/4,
-         handle_disconnect/2,
-         handle_message/2,
-         terminate/1
-        ]).
+-export([
+    init/6,
+    handle_connect/7,
+    handle_message/2,
+    handle_error/2,
+    handle_disconnect/2,
+    terminate/2
+]).
 
--include_lib("of_protocol/include/of_protocol.hrl").
+-define(STATE, echo_handler_state).
+-record(?STATE, {
+    handler_pid :: pid(),
+    connection_pid
+    }).
 
-setup(SwitchIP) ->
-    ok = of_driver:grant_ipaddr(SwitchIP, echo_handler, []).
+% of_driver callbacks 
+init(IpAddr, DataPathId, Features, Version, ConnectionPid, Opt) ->
+    {ok, Pid} = echo_logic:ofd_find_handler(DataPathId),
+    {ok, ConnPid} = echo_logic:ofd_init(Pid,
+                    IpAddr, DataPathId, Features, Version, ConnectionPid, Opt),
+    {ok, #?STATE{handler_pid = ConnPid, connection_pid = ConnectionPid}}.
 
-state(Pid) ->
-  gen_server:call(Pid,state).
- 
-%% TODO: these calls probably have to be call, and then return the updated state to the of_driver_connection.
-handle_connect(LogicPid,NewAuxConn,ConnRole,AuxId) ->
-    {ok,State} = gen_server:call(LogicPid, {connect, NewAuxConn, ConnRole, AuxId}),
-    {ok,State}.
+handle_connect(IpAddr, DataPathId, Features, Version, ConnectionPid, AuxId, Opt) ->
+    {ok, Pid} = echo_logic:ofd_find_handler(DataPathId),
+    {ok, ConnPid} = echo_logic:ofd_connect(Pid,
+                IpAddr, DataPathId, Features, Version, ConnectionPid, AuxId, Opt),
+    {ok, #?STATE{handler_pid = ConnPid, connection_pid = ConnectionPid}}.
 
-handle_disconnect(LogicPid,AuxConn) ->
-    {ok,State} = gen_server:call(LogicPid, {disconnect, AuxConn}),
-    {ok,State}.
+handle_message(Msg, State = #?STATE{
+                                handler_pid = ConnPid,
+                                connection_pid = ConnectionPid}) ->
+    case echo_logic:ofd_message(ConnPid, ConnectionPid, Msg) of
+        ok ->
+            {ok, State};
+        {terminate, Reason} ->
+            {terminate, Reason, State}
+    end.
 
-terminate(LogicPid) ->
-    ok = gen_server:cast(LogicPid, close_connection),
-    ok.
+handle_error(Error, State = #?STATE{
+                                handler_pid = ConnPid,
+                                connection_pid = ConnectionPid}) ->
+    case echo_logic:ofd_error(ConnPid, ConnectionPid, Error) of
+        ok ->
+            {ok, State};
+        {terminate, Reason} ->
+            {terminate, Reason, State}
+    end.
 
-handle_message(Msg,LogicPid) -> %% {ok,_NewState}
-    {ok,_NewState} = gen_server:call(LogicPid, {message, Msg}),
-    {ok,_NewState}.
+handle_disconnect(Reason, #?STATE{
+                                handler_pid = ConnPid,
+                                connection_pid = ConnectionPid}) ->
+    ok = echo_logic:ofd_disconnect(ConnPid, ConnectionPid, Reason).
 
-%%------------------------------------------------------------------------------
-
-%% TODO: adding init(), because init and init_handler is not consistent between ofs_handler_driver
-init(IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts) ->
-  init_handler(IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts).
-
-init_handler(IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts) ->
-    {ok, _Pid} = echo_logic:start_link(IpAddr,DatapathInfo,FeaturesReply,Version,Conn,Opts).
+terminate(Reason, #?STATE{ handler_pid = ConnPid,
+                           connection_pid = ConnectionPid}) ->
+    ok = echo_logic:ofd_terminate(ConnPid, ConnectionPid, Reason).

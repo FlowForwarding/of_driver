@@ -9,7 +9,7 @@
 -copyright("2013, Erlang Solutions Ltd.").
 
 -include_lib("of_driver/include/of_driver.hrl").
-
+-include_lib("of_driver/include/echo_handler_logic.hrl").
 
 %% DB API to seperate DB infrastructure from LOOM.
 
@@ -41,7 +41,8 @@ install() ->
 	install_try()
     catch
 	C:E ->
-	    io:format("... [~p] Install failed. ~p.\n...Reason:~p...\n...Stacktrace:~p...\n",[?MODULE,C,E,erlang:get_stacktrace()]),
+	    io:format("... [~p] Install failed. ~p.\n...Reason:~p...\n...Stacktrace:~p...\n",
+        [?MODULE,C,E,erlang:get_stacktrace()]),
 	    ok
     end.
 
@@ -54,6 +55,8 @@ install_try() ->
 
     %% NOTE: just allowing ANY connection in the interim...
     of_driver:grant_ipaddr(any),
+
+    ets:new(?ECHO_HANDLER_TBL, [named_table, ordered_set, {keypos, 2}, public]),
 
     lists:foreach(fun(Tbl) -> install_try_ets(Tbl) end,
                   [?DATAPATH_TBL, ?SWITCH_CONN_TBL]).
