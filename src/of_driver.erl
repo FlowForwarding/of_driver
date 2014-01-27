@@ -53,6 +53,9 @@ grant_ipaddr(IpAddr, SwitchHandler, Opts) ->
 
 -spec revoke_ipaddr(IpAddr :: inet:ip_address()) -> ok | {error, einval}.
 %% @doc
+revoke_ipaddr(any) ->
+    lists:foreach(fun({{_IpAddr,_Port},Pid,_ConnType}) -> close_connection(Pid) end,ets:tab2list(?SWITCH_CONN_TBL) ),
+    of_driver_db:revoke_ipaddr(any);
 revoke_ipaddr(IpAddr) -> 
     case of_driver_switch_connection:lookup_connection_pid({10,151,1,50}) of 
         []      -> ok;
