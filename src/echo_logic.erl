@@ -24,7 +24,7 @@
         of_version,
         main_connection,
         aux_connections,
-        callback_module,
+        callback_mod,
         callback_state,
         generation_id,
         opt
@@ -113,7 +113,7 @@ handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt}, _Fro
         of_version = Version,
         main_connection = Connection,
         aux_connections = [],
-        callback_module = get_opt(callback_module, Opt),
+        callback_mod = get_opt(callback_mod, Opt),
         opt = Opt
     },
     {reply, {ok, self()}, State1};
@@ -149,7 +149,7 @@ handle_call(Request, _From, State) ->
 % two states - connected and not_connected
 handle_cast(init, State) ->
     % callback module from opts
-    Module = get_opt(callback_module),
+    Module = get_opt(callback_mod),
 
     % controller peer from opts
     Peer = get_opt(peer),
@@ -174,7 +174,7 @@ handle_info(Info, State) ->
 
 terminate(Reason, #?STATE{ main_connection = MainConn,
                            callback_state = CallbackState,
-                           callback_module = Module}) ->
+                           callback_mod = Module}) ->
     % remove self from datapath id map to avoid getting disconnect callbacks
     ?WARNING("\n\n !!!!!!!!!! HandlerLogic : ~p",[Reason]),
     %% of_driver:close_connection(MainConn),

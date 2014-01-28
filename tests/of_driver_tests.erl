@@ -10,7 +10,7 @@ of_driver_test_() ->
 	{setup,
      fun() -> 
 
-			application:unset_env(of_driver,callback_module),
+			application:unset_env(of_driver,switch_handler),
 			application:unset_env(of_driver,init_opt),
 
              application:stop(mnesia),
