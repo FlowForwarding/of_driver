@@ -64,10 +64,7 @@ accept(ListenSocket) ->
         {ok, Socket} ->
             case of_driver_connection_sup:start_child(Socket) of
                 {ok, ConnCtrlPID} ->
-                    case gen_tcp:controlling_process(Socket, ConnCtrlPID) of
-                        ok               -> ok;
-                        {error, _Reason} -> ok
-                    end;
+                    gen_tcp:controlling_process(Socket, ConnCtrlPID);
                 {error,_Reason} ->
                     ok
             end,

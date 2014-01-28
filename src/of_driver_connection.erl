@@ -238,7 +238,15 @@ handle_message(#ofp_message{version = Version,
         {stop, Reason, NewState4} ->
             {stop, Reason, NewState4};
         NewState3 ->
-            ok = of_driver_db:insert_switch_connection(IpAddr, Port, self(),NewState3#?STATE.conn_role),
+            CRole = NewState3#?STATE.conn_role,
+            ok = of_driver_db:insert_switch_connection(IpAddr, Port, self(), CRole),
+            case CRole of
+                aux ->
+                    [_Port,MainPid,_] = of_driver_switch_connection:main_pid(IpAddr),
+                    erlang:link(MainPid);
+                _ ->
+                    ok
+            end,
             {ok,NewHandlerState} = SwitchHandler:handle_connect(IpAddr, DatapathInfo, Features,
                                                                Version, self(), NewState3#?STATE.aux_id, Opts),
             NewState3#?STATE{ handler_state   = NewHandlerState,
