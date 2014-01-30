@@ -39,7 +39,7 @@ allowed_ipaddr(IpAddr) ->
 grant_ipaddr(IpAddr) ->
     % XXX might be better to apply defaults on read so old defaults are
     % not stored in the database
-    CallbackMod = of_driver_utils:conf_default(switch_handler,
+    CallbackMod = of_driver_utils:conf_default(callback_module,
                             fun erlang:is_atom/1, of_driver_default_handler),
     Opts = of_driver_utils:conf_default(init_opt, []),
     grant_ipaddr(IpAddr, CallbackMod, Opts).
@@ -93,7 +93,7 @@ send(ConnectionPid, #ofp_message{} = Msg) ->
 -spec send_list(ConnectionPid :: term(), Messages :: list(Msg::#ofp_message{})) -> 
                        ok | {error, [ok | {error, Reason :: term()}]}.
 %% @doc
-send_list(ConnectionPid,[]) ->
+send_list(_ConnectionPid,[]) ->
     ok;
 send_list(ConnectionPid,[H|T]) ->
     gen_server:cast(ConnectionPid,{send,H}),
@@ -130,7 +130,7 @@ close_connection(ConnectionPid) -> %% ONLY CLOSE CONNECTION, might be main, or a
 -spec close_ipaddr(IpAddr :: tuple()) -> ok.
 %% @doc
 close_ipaddr(IpAddr) ->
-    [ close_connection(Pid) || [_Port,Pid,Type] <- of_driver_switch_connection:lookup_connection_pid(IpAddr) ],
+    [ close_connection(Pid) || [_Port,Pid,_Type] <- of_driver_switch_connection:lookup_connection_pid(IpAddr) ],
     ok.
 
 -spec set_xid(Msg :: #ofp_message{}, Xid :: integer()) -> {ok,#ofp_message{}}.
