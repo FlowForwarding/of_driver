@@ -163,7 +163,7 @@ handle_info({tcp, Socket, Data},#?STATE{ parser        = undefined,
                     %% and do something with Leftovers ( If there are any ... )
                     {noreply, State#?STATE{ parser = Parser, version = Version, startup_leftovers = Leftovers }}
             end;
-        {ok, #ofp_message{xid = Xid, body = _Body} = Msg, Leftovers} ->
+        {ok, #ofp_message{xid = _Xid, body = _Body} = Msg, Leftovers} ->
             ?WARNING("DROP INCOMMING MSG (~p). Initial switch-to-controller hello handshake not completed.\n",[Msg]),
             {noreply,State#?STATE{startup_leftovers = Leftovers}}; %% TODO: maybe hello could be second in leftovers.
         {error, binary_too_small} ->
@@ -233,26 +233,26 @@ handle_message(#ofp_message{version = Version,
             {ok,AuxID} = of_driver_utils:get_aux_id(Version, Features),
             NewState1#?STATE{aux_id = AuxID}
     end,
-    {ok, HandlerState} = SwitchHandler:init(IpAddr, DatapathInfo, Features, Version, self(), Opts),
-    case handle_datapath(NewState2#?STATE{ handler_state = HandlerState }) of 
+    case handle_datapath(NewState2) of 
         {stop, Reason, NewState4} ->
             {stop, Reason, NewState4};
         NewState3 ->
             CRole = NewState3#?STATE.conn_role,
             ok = of_driver_db:insert_switch_connection(IpAddr, Port, self(), CRole),
+            {ok,NewHandlerState} = 
             case CRole of
                 aux ->
                     [_Port,MainPid,_] = of_driver_switch_connection:main_pid(IpAddr),
-                    erlang:link(MainPid);
-                _ ->
-                    ok
+                    erlang:link(MainPid),
+                    SwitchHandler:handle_connect(IpAddr, DatapathInfo, Features,
+                                                 Version, self(), NewState3#?STATE.aux_id, Opts);
+                main ->
+                     SwitchHandler:init(IpAddr, DatapathInfo, Features, Version, self(), Opts)
             end,
-            {ok,NewHandlerState} = SwitchHandler:handle_connect(IpAddr, DatapathInfo, Features,
-                                                               Version, self(), NewState3#?STATE.aux_id, Opts),
             NewState3#?STATE{ handler_state   = NewHandlerState,
                               connection_init = true }
     end;
-handle_message(#ofp_message{ type = Type } = Msg, #?STATE{connection_init = false} = State) -> %% TODO: possibly queue/store these messages...
+handle_message(#ofp_message{} = Msg, #?STATE{connection_init = false} = State) -> %% TODO: possibly queue/store these messages...
     ?WARNING("Features Reply startup not completed. Not handingling incomming message ~p\n",[Msg]),
     State;
 
