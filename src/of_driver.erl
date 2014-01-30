@@ -39,7 +39,7 @@ allowed_ipaddr(IpAddr) ->
 grant_ipaddr(IpAddr) ->
     % XXX might be better to apply defaults on read so old defaults are
     % not stored in the database
-    CallbackMod = of_driver_utils:conf_default(callback_module,
+    CallbackMod = of_driver_utils:conf_default(switch_handler,
                             fun erlang:is_atom/1, of_driver_default_handler),
     Opts = of_driver_utils:conf_default(init_opt, []),
     grant_ipaddr(IpAddr, CallbackMod, Opts).
@@ -57,7 +57,7 @@ revoke_ipaddr(any) ->
     lists:foreach(fun({{_IpAddr,_Port},Pid,_ConnType}) -> close_connection(Pid) end,ets:tab2list(?SWITCH_CONN_TBL) ),
     of_driver_db:revoke_ipaddr(any);
 revoke_ipaddr(IpAddr) -> 
-    case of_driver_switch_connection:lookup_connection_pid({10,151,1,50}) of 
+    case of_driver_switch_connection:lookup_connection_pid(IpAddr) of 
         []      -> ok;
         Entries -> lists:foreach(fun([_Port,Pid,_ConnType]) -> close_connection(Pid) end,Entries)
     end,
