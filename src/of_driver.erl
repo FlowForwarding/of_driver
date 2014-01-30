@@ -121,9 +121,9 @@ sync_send_list(ConnectionPid,Msgs) when is_list(Msgs) ->
 %% @doc
 close_connection(ConnectionPid) -> %% ONLY CLOSE CONNECTION, might be main, or aux
     try 
-      gen_server:call(ConnectionPid,api_closed_connection) 
+      gen_server:call(ConnectionPid,close_connection) 
     catch 
-      exit:{normal,{gen_server,call,[ConnectionPid,api_closed_connection]}} ->
+      exit:{normal,{gen_server,call,[ConnectionPid,close_connection]}} ->
         ok
     end.
 
