@@ -39,7 +39,7 @@ allowed_ipaddr(IpAddr) ->
 grant_ipaddr(IpAddr) ->
     % XXX might be better to apply defaults on read so old defaults are
     % not stored in the database
-    CallbackMod = of_driver_utils:conf_default(switch_handler,
+    CallbackMod = of_driver_utils:conf_default(callback_module,
                             fun erlang:is_atom/1, of_driver_default_handler),
     Opts = of_driver_utils:conf_default(init_opt, []),
     grant_ipaddr(IpAddr, CallbackMod, Opts).
