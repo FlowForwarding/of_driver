@@ -71,27 +71,24 @@ init([Socket]) ->
     of_driver_utils:setopts(Protocol, Socket, [{active, once}]),
     process_flag(trap_exit, true),
     {ok, {Address, Port}} = inet:peername(Socket),
-    case of_driver:allowed_ipaddr(Address) of
-        {true, #?ACL_TBL{switch_handler = SwitchHandler,
-                         opts           = Opts } = _Entry} ->
-            ?INFO("Connected to Switch on ~s:~p. Connection : ~p \n",[inet_parse:ntoa(Address), Port, self()]),
-            Versions = of_driver_utils:conf_default(of_compatible_versions, fun erlang:is_list/1, [3, 4]),
-            ok = gen_server:cast(self(),{send,hello}),
-            {ok, #?STATE{ switch_handler      = SwitchHandler,
-                          switch_handler_opts = Opts,
-                          socket              = Socket,
-                          ctrl_versions       = Versions,
-                          protocol            = Protocol,
-                          address             = Address,
-                          port                = Port
-                        }};
-        false ->
-            terminate_connection(Socket),
-            ?WARNING("Rejecting connection - "
-                    "IP Address not allowed ipaddr(~s) port(~p)\n",
-                                                        [inet_parse:ntoa(Address), Port]),
-            ignore
-    end.
+    SwitchHandler = of_driver_utils:conf_default(switch_handler, of_driver_default_handler),
+    Opts          = of_driver_utils:conf_default(init_opt,[ {enable_ping,false},
+                                                            {ping_timeout,1000},
+                                                            {ping_idle,5000},
+                                                            {multipart_timeout,30000},
+                                                            {callback_mod,echo_logic}
+                                                          ]),
+    ?INFO("Connected to Switch on ~s:~p. Connection : ~p \n",[inet_parse:ntoa(Address), Port, self()]),
+    Versions = of_driver_utils:conf_default(of_compatible_versions, fun erlang:is_list/1, [3, 4]),
+    ok = gen_server:cast(self(),{send,hello}),
+    {ok, #?STATE{ switch_handler      = SwitchHandler,
+                  switch_handler_opts = Opts,
+                  socket              = Socket,
+                  ctrl_versions       = Versions,
+                  protocol            = Protocol,
+                  address             = Address,
+                  port                = Port
+                }}.
 
 %%------------------------------------------------------------------
 
