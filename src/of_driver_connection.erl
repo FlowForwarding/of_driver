@@ -71,7 +71,7 @@ init([Socket]) ->
     of_driver_utils:setopts(Protocol, Socket, [{active, once}]),
     process_flag(trap_exit, true),
     {ok, {Address, Port}} = inet:peername(Socket),
-    SwitchHandler = of_driver_utils:conf_default(switch_handler, of_driver_default_handler),
+    SwitchHandler = of_driver_utils:conf_default(callback_module, of_driver_default_handler),
     Opts          = of_driver_utils:conf_default(init_opt,[ {enable_ping,false},
                                                             {ping_timeout,1000},
                                                             {ping_idle,5000},
