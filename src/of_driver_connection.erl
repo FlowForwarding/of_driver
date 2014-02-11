@@ -134,8 +134,13 @@ handle_cast({send,Msg},State) ->
 
 handle_cast_send(Msg,#?STATE{ protocol = Protocol,
                               socket   = Socket } = _State) ->
-    {ok,EncodedMessage} = of_protocol:encode(Msg),
-    ok = of_driver_utils:send(Protocol,Socket,EncodedMessage).
+    case of_protocol:encode(Msg) of
+        {ok,EncodedMessage} ->
+            ok = of_driver_utils:send(Protocol,Socket,EncodedMessage);
+        {error, Error} ->
+            % XXX communicate this back somehow
+            ?ERROR("bad message: ~p ~p~n", [Error, Msg])
+    end.
 
 %%------------------------------------------------------------------
 
