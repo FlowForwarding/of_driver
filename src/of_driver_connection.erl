@@ -321,13 +321,18 @@ close_of_connection(#?STATE{ socket        = Socket,
                              port          = Port,
                              switch_handler= SwitchHandler,
                              handler_state = HandlerState } = State, Reason) ->
+    ?WARNING("connection terminated: datapathid(~p) aux_id(~p) reason(~p)~n",
+                            [DatapathInfo, AuxID, Reason]),
     of_driver_db:remove_datapath_info(ConnRole,DatapathInfo,AuxID),   
     ok = of_driver_db:remove_switch_connection(Address, Port),
-    SwitchHandler:handle_disconnect(driver_closed_connection,HandlerState),
+    connection_close_callback(SwitchHandler,HandlerState,AuxID),
     ok = terminate_connection(Socket),
-    ?WARNING("connection terminated: datapathid(~p) aux_id(~p) reason(~p)\n",
-                            [DatapathInfo, AuxID, Reason]),
     {stop, normal, State#?STATE{socket = undefined}}.
+
+connection_close_callback(Module, HandlerState, 0) ->
+    Module:terminate(driver_closed_connection, HandlerState);
+connection_close_callback(Module, HandlerState, _AuxID) ->
+    Module:handle_disconnect(driver_closed_connection,HandlerState).
 
 %%-----------------------------------------------------------------------------
 
