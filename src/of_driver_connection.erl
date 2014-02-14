@@ -185,8 +185,13 @@ handle_info({tcp_error, _Socket, _Reason},State) ->
 
 %%------------------------------------------------------------------
 
-terminate(Reason,State) ->
-    ?INFO("[~p] Reason : ~p ... \n",[?MODULE,Reason]),
+terminate(Reason, #?STATE{socket = undefined}) ->
+    % terminating after connection is closed
+    ?INFO("[~p] terminating: ~p~n",[?MODULE, Reason]),
+    ok;
+terminate(Reason, State) ->
+    % terminate and close connection
+    ?INFO("[~p] terminating (crash): ~p~n",[?MODULE, Reason]),
     close_of_connection(State,gen_server_terminate),
     ok.
 
@@ -318,12 +323,11 @@ close_of_connection(#?STATE{ socket        = Socket,
                              handler_state = HandlerState } = State, Reason) ->
     of_driver_db:remove_datapath_info(ConnRole,DatapathInfo,AuxID),   
     ok = of_driver_db:remove_switch_connection(Address, Port),
-    io:format("\n\n[HANDLE DISCONNECT] HandlerState : ~p\n",[HandlerState]),
     SwitchHandler:handle_disconnect(driver_closed_connection,HandlerState),
     ok = terminate_connection(Socket),
     ?WARNING("connection terminated: datapathid(~p) aux_id(~p) reason(~p)\n",
                             [DatapathInfo, AuxID, Reason]),
-    {stop, normal, State}.
+    {stop, normal, State#?STATE{socket = undefined}}.
 
 %%-----------------------------------------------------------------------------
 
@@ -402,5 +406,4 @@ create_error(4, Type, Code) ->
     ofp_client_v4:create_error(Type, Code).
 
 terminate_connection(Socket) ->
-    % XXX call appropriate callback
     of_driver_utils:close(tcp, Socket).
