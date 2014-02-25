@@ -20,7 +20,8 @@ of_driver_test_() ->
           {"gen_xid",             fun gen_xid/0},
           {"main_connect", fun main_connect/0},
           {"main_terminate", fun main_terminate/0},
-          {"early_message", fun early_message/0}|
+          {"early_message", fun early_message/0},
+          {"close_connection", fun close_connection/0}|
           [{N, fun() -> F(S) end}
                      || {N, F} <- [
                                    {"aux_connect", fun aux_connect/1}
@@ -32,7 +33,6 @@ of_driver_test_() ->
                                   ,{"send_list", fun send_list/1}
                                   ,{"sync_send_list", fun sync_send_list/1}
                                   ,{"sync_send_list_no_reply", fun sync_send_list_no_reply/1}
-%                                 ,{"close_connection", fun close_connection/1}
                                   ]]]} end
     }.
 
@@ -148,6 +148,22 @@ early_message() ->
     gen_tcp:close(Socket),
     ?assert(meck:validate(of_driver_handler_mock)).
 
+close_connection() ->
+    ExpectedDatapathId = 1,
+    Me = self(),
+    meck:expect(of_driver_handler_mock, init,
+        fun(_IpAddr, _DatapathId, _Features, _Version, Connection, _Opt) ->
+            Me ! {connection, Connection},
+            {ok, callback_state} end),
+    meck:expect(of_driver_handler_mock, terminate, fun(_Reason, callback_state) -> ok end),
+    Socket = connect(ExpectedDatapathId),
+    Conn = receive
+        {connection, C} ->
+            C
+    end,
+    of_driver:close_connection(Conn),
+    ?assert(meck:validate(of_driver_handler_mock)).
+
 aux_connect({Socket, _ConnTable}) ->
     ExpectedAuxId = 1,
     meck:expect(of_driver_handler_mock, handle_connect,
@@ -247,10 +263,13 @@ sync_send_list({Socket, ConnTable}) ->
     {ok, [Reply0, Reply1, Reply2]} = wait_future(Future),
     ?assertMatch({ok, #ofp_message{type = features_reply, xid = RXID0}}, Reply0),
     ?assertMatch({ok, #ofp_message{type = features_reply, xid = RXID1}}, Reply1),
-    ?assertMatch({ok, #ofp_message{type = features_reply, xid = RXID2}}, Reply2).
-    % no message callback
+    ?assertMatch({ok, #ofp_message{type = features_reply, xid = RXID2}}, Reply2),
+    ?assertNot(meck:called(of_driver_handler_mock, handle_message, '_')).
 
 sync_send_list_no_reply({Socket, ConnTable}) ->
+    meck:expect(of_driver_handler_mock, handle_message,
+                fun(#ofp_message{type = features_reply, xid = 9999}, State) ->
+                    {ok, State} end),
     Connection = get_connection(ConnTable),
     Msg = of_msg_lib:get_features(4),
     Future = future(of_driver, sync_send_list, [Connection, [Msg, Msg, Msg]]),
@@ -265,15 +284,8 @@ sync_send_list_no_reply({Socket, ConnTable}) ->
     {ok, [Reply0, Reply1, Reply2]} = wait_future(Future),
     ?assertMatch({ok, noreply}, Reply0),
     ?assertMatch({ok, noreply}, Reply1),
-    ?assertMatch({ok, #ofp_message{type = features_reply, xid = RXID2}}, Reply2).
-    % no message callback
-
-close_connection({Socket, ConnTable}) ->
-    IpAddr={127,0,0,1},
-    %% start stub, that mimics LINC ...
-    [[_Port,ConnectionPid,_ConnRole]] = of_driver_switch_connection:lookup_connection_pid(IpAddr),
-    ok = of_driver:close_connection(ConnectionPid),
-    true.
+    ?assertMatch({ok, #ofp_message{type = features_reply, xid = RXID2}}, Reply2),
+    ?assert(meck:validate(of_driver_handler_mock)).
 
 %%------------------------------------------------------------------------------
 
