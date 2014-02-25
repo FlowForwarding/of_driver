@@ -35,11 +35,7 @@ create_flow({connection,ConnectionPid}) ->
                                                                    max_len = 64}]}]
                                 }
                           },
-    {ok,OfpMessage} = of_driver:sync_send(ConnectionPid,FlowMod),
-    {ok,OfpMessage};
-create_flow(IpAddr) when is_tuple(IpAddr) ->
-  [[_Port,ConnectionPid,_Type]|_] = of_driver_switch_connection:lookup_connection_pid(IpAddr),
-  create_flow({connection,ConnectionPid}).    
+    of_driver:sync_send(ConnectionPid,FlowMod).
 
 clear_flow(ConnectionPid) when is_pid(ConnectionPid) ->
 	clear_flow({connection,ConnectionPid});
@@ -60,8 +56,4 @@ clear_flow({connection,ConnectionPid}) ->
                                           flags = [],
                                           match = #ofp_match{fields = []},
                                           instructions = []}},
-    {ok,OfpMessage} = of_driver:sync_send(ConnectionPid,RemoveFlows),
-    {ok,OfpMessage};
-clear_flow(IpAddr) when is_tuple(IpAddr) ->
-  [[_Port,ConnectionPid,_Type]|_] = of_driver_switch_connection:lookup_connection_pid(IpAddr),
-  clear_flow({connection,ConnectionPid}).
+    of_driver:sync_send(ConnectionPid,RemoveFlows).

@@ -112,75 +112,14 @@
 -include_lib("of_driver/include/of_driver.hrl").
 -include_lib("of_driver/include/of_driver_logger.hrl").
 
--export([ allowed_ipaddr/1,
-          grant_ipaddr/1,
-          grant_ipaddr/3,
-          revoke_ipaddr/1,
-          get_allowed_ipaddrs/0,
-          set_allowed_ipaddrs/1,
-          send/2,
+-export([ send/2,
           send_list/2,
           sync_send/2,
           sync_send_list/2,
           close_connection/1,
-          close_ipaddr/1,
           set_xid/2,
           gen_xid/1
         ]).
-
-%%------------------------------------------------------------------
-% @hidden
--spec allowed_ipaddr(IpAddr :: inet:ip_address()) -> ok | {error,einval}.
-allowed_ipaddr(IpAddr) ->
-    of_driver_db:allowed(IpAddr).
-
-% @hidden
--spec grant_ipaddr(IpAddr :: inet:ip_address()) -> ok | {error, einval}.
-grant_ipaddr(IpAddr) ->
-    % XXX might be better to apply defaults on read so old defaults are
-    % not stored in the database
-    CallbackMod = of_driver_utils:conf_default(callback_module,
-                            fun erlang:is_atom/1, of_driver_default_handler),
-    Opts = of_driver_utils:conf_default(init_opt, []),
-    grant_ipaddr(IpAddr, CallbackMod, Opts).
-
-% @hidden
--spec grant_ipaddr(IpAddr        :: inet:ip_address(), 
-                   SwitchHandler :: term(),
-                   Opts          :: list()) -> ok | {error, einval}.
-grant_ipaddr(IpAddr, SwitchHandler, Opts) ->
-    of_driver_db:grant_ipaddr(IpAddr, SwitchHandler, Opts).
-
-% @hidden
--spec revoke_ipaddr(IpAddr :: inet:ip_address()) -> ok | {error, einval}.
-revoke_ipaddr(any) ->
-    lists:foreach(fun({{_IpAddr,_Port},Pid,_ConnType}) -> close_connection(Pid) end,ets:tab2list(?SWITCH_CONN_TBL) ),
-    of_driver_db:revoke_ipaddr(any);
-revoke_ipaddr(IpAddr) -> 
-    case of_driver_switch_connection:lookup_connection_pid(IpAddr) of 
-        []      -> ok;
-        Entries -> lists:foreach(fun([_Port,Pid,_ConnType]) -> close_connection(Pid) end,Entries)
-    end,
-    of_driver_db:revoke_ipaddr(IpAddr).
-
-% @hidden
--spec get_allowed_ipaddrs() -> [] | [allowance()].
-get_allowed_ipaddrs() ->
-    of_driver_db:get_allowed_ipaddrs().
-
-% @hidden
--spec set_allowed_ipaddrs(Allowances :: list(allowance())) -> ok.
-set_allowed_ipaddrs(Allowances) when is_list(Allowances) ->
-    %% TODO: Close any existing connections from IpAddr that was removed.
-    lists:map(fun({IpAddr,_SwitchHandler,_Opts}) -> inet_parse:ntoa(IpAddr) end, Allowances), %% Validation could be improved.
-    PrevAllowed = of_driver_db:get_allowed_ipaddrs(),
-    of_driver_db:clear_acl_list(),
-    lists:foreach(fun({IpAddr,SwitchHandler,Opts}) ->
-                        grant_ipaddr(IpAddr,SwitchHandler,Opts);
-                     (_) ->
-                        ok
-                  end, Allowances),
-    PrevAllowed.
 
 %%------------------------------------------------------------------
 
@@ -236,7 +175,7 @@ send_list(ConnectionPid,[H|T]) ->
                        {ok, Reply :: #ofp_message{} | noreply} |
                        {error, Reason :: term()}.
 sync_send(ConnectionPid, #ofp_message{} = Msg) -> 
-    of_driver_connection:sync_call(ConnectionPid,Msg).
+    of_driver_connection:sync_call(ConnectionPid, Msg).
 
 %% @doc
 %% Send a list of `Msg' records to a switch via `Connection' followed by
@@ -278,12 +217,6 @@ close_connection(ConnectionPid) -> %% ONLY CLOSE CONNECTION, might be main, or a
       exit:{normal,{gen_server,call,[ConnectionPid,close_connection]}} ->
         ok
     end.
-
-%% @hidden
--spec close_ipaddr(IpAddr :: tuple()) -> ok.
-close_ipaddr(IpAddr) ->
-    [ close_connection(Pid) || [_Port,Pid,_Type] <- of_driver_switch_connection:lookup_connection_pid(IpAddr) ],
-    ok.
 
 %% doc
 %% Update the xid in `Msg' to `Xid'.

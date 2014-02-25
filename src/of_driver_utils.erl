@@ -10,9 +10,7 @@
 
 -include_lib("of_protocol/include/of_protocol.hrl").
 
--export([list_connections/0,
-         list_connections/1,
-         connection_info/1
+-export([connection_info/1
         ]).
 
 -export([send/3,  
@@ -30,15 +28,6 @@
          get_aux_id/2,
          get_capabilities/2
         ]).
-
--spec list_connections() -> list().
-% @doc
-list_connections() -> 
-    ets:tab2list(of_driver_switch_connection).
-
--spec list_connections( Arg :: tuple() ) -> list().
-list_connections(IpAddr) when is_tuple(IpAddr) ->
-    of_driver_switch_connection:lookup_connection_pid(IpAddr).
 
 -spec connection_info(ConnectionPid :: pid()) -> {ok,record()} | undefined.
 % @doc
@@ -91,7 +80,7 @@ create_hello(Versions) when is_list(Versions) ->
                true ->
                    #ofp_hello{}
            end,
-    #ofp_message{version = Version, xid = 0, body = Body}.
+    #ofp_message{version = Version, type = hello, xid = 0, body = Body}.
 
 create_features_request(Version) ->
     apply_version(Version,features_request,[]).

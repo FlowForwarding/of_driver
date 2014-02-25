@@ -2,217 +2,372 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("of_protocol/include/of_protocol.hrl").
--include_lib("of_driver/include/of_driver_acl.hrl").
+-include_lib("of_protocol/include/ofp_v4.hrl").
+
+-define(LISTEN_PORT, 15578).
+-define(DATAPATH_ID, 0).
+-define(DATAPATH_MAC, <<8,0,39,150,212,121>>).
 
 %%------------------------------------------------------------------------------
 
 of_driver_test_() ->
-	{setup,
-     fun() -> 
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(S) ->
+        {foreach, fun test_setup/0,
+         [{"set_xid",             fun set_xid/0},
+          {"gen_xid",             fun gen_xid/0},
+          {"main_connect", fun main_connect/0},
+          {"main_terminate", fun main_terminate/0},
+          {"early_message", fun early_message/0}|
+          [{N, fun() -> F(S) end}
+                     || {N, F} <- [
+                                   {"aux_connect", fun aux_connect/1}
+                                  ,{"in_message", fun in_message/1}
+                                  ,{"send", fun send/1}
+                                  ,{"sync_send", fun sync_send/1}
+                                  ,{"sync_send_no_reply", fun sync_send_no_reply/1}
+                                  ,{"sync_send_non_reply", fun sync_send_non_reply/1}
+                                  ,{"send_list", fun send_list/1}
+                                  ,{"sync_send_list", fun sync_send_list/1}
+                                  ,{"sync_send_list_no_reply", fun sync_send_list_no_reply/1}
+%                                 ,{"close_connection", fun close_connection/1}
+                                  ]]]} end
+    }.
 
-			application:set_env(of_driver,callback_module,echo_handler),
-			application:unset_env(of_driver,init_opt),
+% XXX multiple sync sends at the same time
 
-             application:stop(mnesia),
-             mnesia:delete_schema([node()]),
-             application:start(mnesia),
-             of_driver_db:install(),
+setup() ->
+%   trace(),
+    ok = meck:new(of_driver_handler_mock, [passthrough]),
+    ConnTable = ets:new(conn_table, [set, public]),
+    [application:set_env(of_driver, K, V) || {K, V} <-
+                                [{callback_module, of_driver_handler_mock},
+                                 {listen_port, ?LISTEN_PORT},
+                                 {init_opt, ConnTable}]],
+    ok = application:start(eenum),
+    ok = application:start(of_protocol),
+    ok = application:start(lager),
+    ok = application:start(of_driver),
+    Socket = connect(),
+    {Socket, ConnTable}.
 
-			{ok,_Pid1} = of_driver_app:start([],[]),
+cleanup({Socket, _ConnTable}) ->
+    ok = gen_tcp:close(Socket),
+    % wait for of_driver to exit before unloading mocks
+    meck:wait(of_driver_handler_mock, terminate, '_', 1000),
+    meck:unload().
 
-			%% start stub, that mimics LINC ...
-			{ok,_Pid2} = of_driver_tcp_stub:start(),
+test_setup() ->
+    meck:reset(of_driver_handler_mock).
 
-			IpAddr={127,0,0,1},
-			ok = of_driver:grant_ipaddr(IpAddr,echo_handler,[{enable_ping,false},
-            	        		     					  {ping_timeout,5000},
-                	    								  {ping_idle,5000},
-                    									  {multipart_timeout,30000}]),
-			timer:sleep(500),
-			[[_Port,ConnectionPid,_ConnRole]] = of_driver_switch_connection:lookup_connection_pid(IpAddr)
-
-     end,
-     fun(_) -> 
-             try gen_server:call(of_driver_tcp_stub,stop) catch _C1:_E1 -> ok end,
-             ok
-     end,
-     {inorder,[
-				{"grant_ipaddr",        fun grant_ipaddr/0},
-				{"revoke_ipaddr",       fun revoke_ipaddr/0},
-				{"get_allowed_ipaddrs", fun get_allowed_ipaddrs/0},
-				{"set_allowed_ipaddrs", fun set_allowed_ipaddrs/0},
-				{"send",                fun send/0},
-				{"sync_send",           fun sync_send/0},
-				{"send_list",           fun send_list/0},
-				{"sync_send_list",      fun sync_send_list/0},
-				{"close_connection",    fun close_connection/0},
-				{"close_ipaddr",        fun close_ipaddr/0},
-				{"set_xid",             fun set_xid/0},
-				{"gen_xid",             fun gen_xid/0}
-              ]}
-	}.
+trace() ->
+    dbg:start(),
+    dbg:tracer(),
+    dbg:p(all, c)
+    % ,dbg:tpl(ofp_v4_encode, [])
+    % ,dbg:tpl(ofp_v4_encode, [{'_', [], [{return_trace}]}])
+    % ,dbg:tpl(of_driver_utils, [])
+    % ,dbg:tpl(of_driver_connection, [])
+    ,dbg:tpl(of_driver_datapath, [])
+    % ,dbg:tpl(gen_tcp, [])
+    % ,dbg:tpl(gen_tcp, [{'_', [], [{return_trace}]}])
+    % ,dbg:tpl(?MODULE, [])
+    .
 
 %%------------------------------------------------------------------------------
-
-grant_ipaddr() ->
-	delete_entries(),
-	?assertEqual(ok,
-		of_driver:grant_ipaddr({10,10,10,10}) ),
-	?assertEqual({error,einval},
-		of_driver:grant_ipaddr(obviously_wrong) ),
-	?assertEqual({error,einval},
-		of_driver:grant_ipaddr(11111111) ),
-	?assertEqual(ok,
-		of_driver:grant_ipaddr("12.12.12.12") ),
-
-	R1 = #of_driver_acl{ip_address={10,10,10,10}, switch_handler=of_driver_default_handler, opts=[]},
-	R2 = #of_driver_acl{ip_address={12,12,12,12}, switch_handler=of_driver_default_handler, opts=[]},
-
-	?assertEqual({true,R1},
-		of_driver:allowed_ipaddr({10,10,10,10}) ),
-	?assertEqual({true,R2},
-		of_driver:allowed_ipaddr({12,12,12,12}) ),
-
-	?assertEqual([R1],
-		mnesia:dirty_read(of_driver_acl,{10,10,10,10}) ),
-	?assertEqual([R2],
-		mnesia:dirty_read(of_driver_acl,{12,12,12,12}) ).
-
-
-revoke_ipaddr() ->
-	delete_entries(),
-	?assertEqual(ok,
-		of_driver:grant_ipaddr({10,10,10,10}) ),
-	?assertEqual(ok,
-		of_driver:grant_ipaddr({12,12,12,12}) ),
-
-	R1 = #of_driver_acl{ip_address={10,10,10,10}, switch_handler=of_driver_default_handler, opts=[]},
-	R2 = #of_driver_acl{ip_address={12,12,12,12}, switch_handler=of_driver_default_handler, opts=[]},
-
-	?assertEqual({true,R1},
-		of_driver:allowed_ipaddr({10,10,10,10}) ),
-	?assertEqual({true,R2},
-		of_driver:allowed_ipaddr({12,12,12,12}) ),
-
-	?assertMatch([R1],
-		mnesia:dirty_read(of_driver_acl,{10,10,10,10}) ),
-	?assertMatch([R2],
-		mnesia:dirty_read(of_driver_acl,{12,12,12,12}) ),
-
-	?assertEqual(ok,
-		of_driver:revoke_ipaddr({10,10,10,10}) ),
-	?assertEqual({error,einval},
-		of_driver:revoke_ipaddr("obviously_wrong...") ),
-
-	?assertEqual([],
-		mnesia:dirty_read(of_driver_acl,{10,10,10,10}) ),
-	?assertEqual([R2],
-		mnesia:dirty_read(of_driver_acl,{12,12,12,12}) ),
-
-	?assertEqual(false,
-		of_driver:allowed_ipaddr({10,10,10,10}) ),
-	?assertEqual({true,R2},
-		of_driver:allowed_ipaddr({12,12,12,12}) ).
-
-
-get_allowed_ipaddrs() ->
-	delete_entries(),
-
-	R1 = #of_driver_acl{ip_address={10,10,10,10}, switch_handler=of_driver_default_handler, opts=[]},
-	R2 = #of_driver_acl{ip_address={12,12,12,12}, switch_handler=of_driver_default_handler, opts=[]},
-
-	?assertEqual(ok,
-		of_driver:grant_ipaddr({10,10,10,10}) ),
-	?assertEqual(ok,
-		of_driver:grant_ipaddr({12,12,12,12}) ),
-	?assertEqual([R1,R2], 
-	 	lists:sort( of_driver:get_allowed_ipaddrs() ) ).
-
-
-set_allowed_ipaddrs() ->
-	delete_entries(),
-	[] = of_driver:set_allowed_ipaddrs([ 
-		{{10,10,10,10}, switch_handler, [{ping,5}] },
-		{{12,12,12,12}, switch_handler2, [{ping,10}] },
-		{{14,14,14,14}, switch_handler3, [{ping,15}] }
-	]),
-
-	E1 = #of_driver_acl{ip_address={10,10,10,10}, switch_handler=switch_handler, opts=[{ping,5}]},
-	E2 = #of_driver_acl{ip_address={12,12,12,12}, switch_handler=switch_handler2, opts=[{ping,10}]},
-	E3 = #of_driver_acl{ip_address={14,14,14,14}, switch_handler=switch_handler3, opts=[{ping,15}]},
-
-	?assertEqual([E1,E2,E3],
-		lists:sort( of_driver:get_allowed_ipaddrs() ) ),
-	ok.
-
-send() ->
-	of_driver_tcp_stub:clear_message_heap(),
-	{ok,[]} = of_driver_tcp_stub:get_message_heap(),
-
-	Msg = of_driver_utils:create_hello(4),
-	[[_Port,ConnectionPid,_ConnRole]] = of_driver_switch_connection:lookup_connection_pid({127,0,0,1}),
-	ok = of_driver:send(ConnectionPid, Msg),
-	timer:sleep(200),
-	% %% ASK STUB FOR MESSAGE BOX...
-	{ok,[{ofp_message,4,hello,0,{ofp_hello,[{versionbitmap,[4]}]}} 
-	    ]} = of_driver_tcp_stub:get_message_heap(),
- 	true.
-
-send_list() ->
-	of_driver_tcp_stub:clear_message_heap(),
-	{ok,[]} = of_driver_tcp_stub:get_message_heap(),
-
-	Msg = of_driver_utils:create_hello(4),
-	[[_Port,ConnectionPid,_ConnRole]] = of_driver_switch_connection:lookup_connection_pid({127,0,0,1}),
-	ok = of_driver:send_list(ConnectionPid, [Msg,Msg,Msg]),
-	timer:sleep(1000),
-	{ok,[{ofp_message,4,hello,0,{ofp_hello,[{versionbitmap,[4]}]}},
- 	     {ofp_message,4,hello,0,{ofp_hello,[{versionbitmap,[4]}]}},
- 	     {ofp_message,4,hello,0,{ofp_hello,[{versionbitmap,[4]}]}}
- 	    ]} = of_driver_tcp_stub:get_message_heap(),
-  	true.
-
-sync_send() ->
-	of_driver_tcp_stub:clear_message_heap(),
-	[[_Port,ConnectionPid,_ConnRole]] = of_driver_switch_connection:lookup_connection_pid({127,0,0,1}),
-	Msg = of_msg_lib:get_features(4),
-	{ok,[ReplyMsg1]} = of_driver:sync_send(ConnectionPid, Msg),
-	?assertEqual(features_reply,ReplyMsg1#ofp_message.type),
-	true.
-
-sync_send_list() ->
-	of_driver_tcp_stub:clear_message_heap(),
-	[[_Port,ConnectionPid,_ConnRole]] = of_driver_switch_connection:lookup_connection_pid({127,0,0,1}),
-	Msg = of_msg_lib:get_features(4),
-	{ok,[ReplyMsg1,ReplyMsg2]} = of_driver:sync_send_list(ConnectionPid, [Msg,Msg]),
-	?assertEqual(features_reply,ReplyMsg1#ofp_message.type),
-	?assertEqual(features_reply,ReplyMsg2#ofp_message.type),
-	true.
-
-close_connection() ->
-	IpAddr={127,0,0,1},
-	ok = of_driver:grant_ipaddr(IpAddr,echo_handler,[{enable_ping,false},
-                    							     {ping_timeout,5000},
-                    								 {ping_idle,5000},
-                    								 {multipart_timeout,30000}]),
-	%% start stub, that mimics LINC ...
-	[[_Port,ConnectionPid,_ConnRole]] = of_driver_switch_connection:lookup_connection_pid(IpAddr),
-	ok = of_driver:close_connection(ConnectionPid),
-	true.
-
-close_ipaddr() ->
-	true.
 
 set_xid() ->
-	true.
+    true.
 
 gen_xid() ->
-	true.
+    true.
+
+main_connect() ->
+    ExpectedDatapathId = 1,
+    meck:expect(of_driver_handler_mock, init,
+        fun(_IpAddr, DatapathId, Features, Version, _Connection, _Opt) ->
+            ?assertMatch(#ofp_features_reply{ 
+                            datapath_mac = ?DATAPATH_MAC,
+                            datapath_id = ExpectedDatapathId}, Features),
+            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_MAC}),
+            ?assertEqual(Version, ?VERSION),
+            {ok, callback_state} end),
+    meck:expect(of_driver_handler_mock, terminate, fun(_Reason, callback_state) -> ok end),
+    Socket = connect(ExpectedDatapathId),
+    gen_tcp:close(Socket),
+    ?assert(meck:validate(of_driver_handler_mock)).
+
+main_terminate() ->
+    ExpectedDatapathId = 1,
+    ExpectedAuxId = 1,
+    meck:expect(of_driver_handler_mock, init,
+        fun(_IpAddr, DatapathId, Features, Version, _Connection, _Opt) ->
+            ?assertMatch(#ofp_features_reply{ 
+                            datapath_mac = ?DATAPATH_MAC,
+                            datapath_id = ExpectedDatapathId}, Features),
+            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_MAC}),
+            ?assertEqual(Version, ?VERSION),
+            {ok, callback_state} end),
+    meck:expect(of_driver_handler_mock, terminate, fun(_Reason, callback_state) -> ok end),
+    meck:expect(of_driver_handler_mock, handle_connect,
+        fun(_IpAddr, DatapathId, Features, Version, _Connection, AuxId, _Opt) ->
+            ?assertMatch(#ofp_features_reply{ 
+                            datapath_mac = ?DATAPATH_MAC,
+                            datapath_id = ExpectedDatapathId}, Features),
+            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_MAC}),
+            ?assertEqual(Version, ?VERSION),
+            ?assertEqual(AuxId, ExpectedAuxId),
+            {ok, aux_callback_state} end),
+    meck:expect(of_driver_handler_mock, handle_disconnect, fun(_Reason, aux_callback_state) -> ok end),
+    Socket = connect(ExpectedDatapathId),
+    AuxSocket = connect(ExpectedDatapathId, ExpectedAuxId),
+    gen_tcp:close(Socket),
+    ?assert(meck:validate(of_driver_handler_mock)).
+
+early_message() ->
+    ExpectedDatapathId = 1,
+    meck:expect(of_driver_handler_mock, init,
+        fun(_IpAddr, DatapathId, Features, Version, _Connection, _Opt) ->
+            ?assertMatch(#ofp_features_reply{ 
+                            datapath_mac = ?DATAPATH_MAC,
+                            datapath_id = ExpectedDatapathId}, Features),
+            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_MAC}),
+            ?assertEqual(Version, ?VERSION),
+            {ok, callback_state} end),
+    meck:expect(of_driver_handler_mock, terminate, fun(_Reason, callback_state) -> ok end),
+    {ok, Socket} = gen_tcp:connect({127,0,0,1}, ?LISTEN_PORT,
+                                            [binary, {active, false}], 5000),
+    send_msg(Socket, packet_in()),
+    send_msg(Socket, of_driver_utils:create_hello([?VERSION])),
+    {#ofp_message{type = hello}, Rest} = receive_msg(Socket, <<>>),
+    {#ofp_message{type = features_request, xid = FXID}, <<>>} = receive_msg(Socket, Rest),
+    send_msg(Socket, packet_in()),
+    send_msg(Socket, features_reply(FXID, ExpectedDatapathId, 0)),
+    gen_tcp:close(Socket),
+    ?assert(meck:validate(of_driver_handler_mock)).
+
+aux_connect({Socket, _ConnTable}) ->
+    ExpectedAuxId = 1,
+    meck:expect(of_driver_handler_mock, handle_connect,
+        fun(_IpAddr, DatapathId, Features, Version, _Connection, AuxId, _Opt) ->
+            ?assertMatch(#ofp_features_reply{ 
+                            datapath_mac = ?DATAPATH_MAC,
+                            datapath_id = ?DATAPATH_ID}, Features),
+            ?assertEqual(DatapathId, {?DATAPATH_ID, ?DATAPATH_MAC}),
+            ?assertEqual(Version, ?VERSION),
+            ?assertEqual(AuxId, ExpectedAuxId),
+            {ok, aux_callback_state} end),
+    meck:expect(of_driver_handler_mock, handle_disconnect, fun(_Reason, aux_callback_state) -> ok end),
+    AuxSocket = connect_aux(ExpectedAuxId),
+    gen_tcp:close(AuxSocket),
+    ?assertNot(meck:called(of_driver_handler_mock, terminate, '_')),
+    ?assert(meck:validate(of_driver_handler_mock)).
+
+in_message({Socket, _ConnTable}) ->
+    meck:expect(of_driver_handler_mock, handle_message,
+                    fun(#ofp_message{type = packet_in}, State) -> {ok, State} end),
+    send_msg(Socket, packet_in()),
+    ?assert(meck:validate(of_driver_handler_mock)).
+
+send({Socket, ConnTable}) ->
+    Hello = of_driver_utils:create_hello(4),
+    Connection = get_connection(ConnTable),
+    ok = of_driver:send(Connection, Hello),
+    {Recv, <<>>} = receive_msg(Socket, <<>>),
+    ?assertEqual(Hello, Recv),
+    ?assertNot(meck:called(of_driver_handler_mock, handle_message, '_')).
+
+sync_send({Socket, ConnTable}) ->
+    Connection = get_connection(ConnTable),
+    Msg = of_msg_lib:get_features(4),
+    Future = future(of_driver, sync_send, [Connection, Msg]),
+    {#ofp_message{type = features_request, xid = RXID}, Rest} = receive_msg(Socket, <<>>),
+    {#ofp_message{type = barrier_request, xid = BXID}, <<>>} = receive_msg(Socket, Rest),
+    send_msg(Socket, features_reply(RXID)),
+    send_msg(Socket, barrier_reply(BXID)),
+    {ok, Reply} = wait_future(Future),
+    ?assertMatch(#ofp_message{type = features_reply}, Reply),
+    ?assertNot(meck:called(of_driver_handler_mock, handle_message, '_')).
+
+sync_send_no_reply({Socket, ConnTable}) ->
+    Connection = get_connection(ConnTable),
+    Msg = of_msg_lib:get_features(4),
+    Future = future(of_driver, sync_send, [Connection, Msg]),
+    {#ofp_message{type = features_request}, Rest} = receive_msg(Socket, <<>>),
+    {#ofp_message{type = barrier_request, xid = BXID}, <<>>} = receive_msg(Socket, Rest),
+    send_msg(Socket, barrier_reply(BXID)),
+    {ok, Reply} = wait_future(Future),
+    ?assertEqual(noreply, Reply),
+    ?assertNot(meck:called(of_driver_handler_mock, handle_message, '_')).
+
+sync_send_non_reply({Socket, ConnTable}) ->
+    % sync_send and message is received that is not a reply to the request
+    % (XID doesn't match).
+    meck:expect(of_driver_handler_mock, handle_message,
+                fun(#ofp_message{type = features_reply, xid = 9999}, State) ->
+                    {ok, State} end),
+    Connection = get_connection(ConnTable),
+    Msg = of_msg_lib:get_features(4),
+    Future = future(of_driver, sync_send, [Connection, Msg]),
+    {#ofp_message{type = features_request}, Rest} = receive_msg(Socket, <<>>),
+    {#ofp_message{type = barrier_request, xid = BXID}, <<>>} = receive_msg(Socket, Rest),
+    send_msg(Socket, features_reply(9999)),
+    send_msg(Socket, barrier_reply(BXID)),
+    {ok, Reply} = wait_future(Future),
+    ?assertEqual(noreply, Reply),
+    ?assertEqual(1, meck:num_calls(of_driver_handler_mock, handle_message, '_')),
+    ?assert(meck:validate(of_driver_handler_mock)).
+
+send_list({Socket, ConnTable}) ->
+    Connection = get_connection(ConnTable),
+    Hello = of_driver_utils:create_hello(4),
+    Features = of_msg_lib:get_features(4),
+    ok = of_driver:send_list(Connection, [Hello, Features, Hello]),
+    {Recv0, Rest0} = receive_msg(Socket, <<>>),
+    {Recv1, Rest1} = receive_msg(Socket, Rest0),
+    {Recv2, <<>>} = receive_msg(Socket, Rest1),
+    ?assertMatch(#ofp_message{type = hello}, Recv0),
+    ?assertMatch(#ofp_message{type = features_request}, Recv1),
+    ?assertMatch(#ofp_message{type = hello}, Recv2).
+
+sync_send_list({Socket, ConnTable}) ->
+    Connection = get_connection(ConnTable),
+    Msg = of_msg_lib:get_features(4),
+    Future = future(of_driver, sync_send_list, [Connection, [Msg, Msg, Msg]]),
+    {#ofp_message{type = features_request, xid = RXID0}, Rest0} = receive_msg(Socket, <<>>),
+    {#ofp_message{type = features_request, xid = RXID1}, Rest1} = receive_msg(Socket, Rest0),
+    {#ofp_message{type = features_request, xid = RXID2}, Rest2} = receive_msg(Socket, Rest1),
+    {#ofp_message{type = barrier_request, xid = BXID}, <<>>} = receive_msg(Socket, Rest2),
+    send_msg(Socket, features_reply(RXID0)),
+    send_msg(Socket, features_reply(RXID1)),
+    send_msg(Socket, features_reply(RXID2)),
+    send_msg(Socket, barrier_reply(BXID)),
+    {ok, [Reply0, Reply1, Reply2]} = wait_future(Future),
+    ?assertMatch({ok, #ofp_message{type = features_reply, xid = RXID0}}, Reply0),
+    ?assertMatch({ok, #ofp_message{type = features_reply, xid = RXID1}}, Reply1),
+    ?assertMatch({ok, #ofp_message{type = features_reply, xid = RXID2}}, Reply2).
+    % no message callback
+
+sync_send_list_no_reply({Socket, ConnTable}) ->
+    Connection = get_connection(ConnTable),
+    Msg = of_msg_lib:get_features(4),
+    Future = future(of_driver, sync_send_list, [Connection, [Msg, Msg, Msg]]),
+    {#ofp_message{type = features_request, xid = _RXID0}, Rest0} = receive_msg(Socket, <<>>),
+    {#ofp_message{type = features_request, xid = _RXID1}, Rest1} = receive_msg(Socket, Rest0),
+    {#ofp_message{type = features_request, xid = RXID2}, Rest2} = receive_msg(Socket, Rest1),
+    {#ofp_message{type = barrier_request, xid = BXID}, <<>>} = receive_msg(Socket, Rest2),
+    % no reply to first features request
+    send_msg(Socket, features_reply(9999)),
+    send_msg(Socket, features_reply(RXID2)),
+    send_msg(Socket, barrier_reply(BXID)),
+    {ok, [Reply0, Reply1, Reply2]} = wait_future(Future),
+    ?assertMatch({ok, noreply}, Reply0),
+    ?assertMatch({ok, noreply}, Reply1),
+    ?assertMatch({ok, #ofp_message{type = features_reply, xid = RXID2}}, Reply2).
+    % no message callback
+
+close_connection({Socket, ConnTable}) ->
+    IpAddr={127,0,0,1},
+    %% start stub, that mimics LINC ...
+    [[_Port,ConnectionPid,_ConnRole]] = of_driver_switch_connection:lookup_connection_pid(IpAddr),
+    ok = of_driver:close_connection(ConnectionPid),
+    true.
 
 %%------------------------------------------------------------------------------
 
-delete_entries() ->
-    [ begin 
-          [ mnesia:dirty_delete(Tbl,Key) || Key <- mnesia:dirty_all_keys(Tbl) ]
-      end || Tbl <- [?ACL_TBL]
-    ].
+get_connection(ConnTable) ->
+    get_connection(ConnTable, 0).
+    
+get_connection(ConnTable, AuxId) ->
+    [{AuxId, Connection}] = ets:lookup(ConnTable, AuxId),
+    Connection.
+
+receive_msg(Socket, <<>>) ->
+    {ok, MsgBin} = gen_tcp:recv(Socket, 0),
+    {ok, OfpMsg, LeftOvers} = of_protocol:decode(<<MsgBin/binary>>),
+%   ?debugFmt("~n~nreceive message: ~p~n", [OfpMsg]),
+    {OfpMsg, LeftOvers};
+receive_msg(_Socket, MsgBin) ->
+    {ok, OfpMsg, LeftOvers} = of_protocol:decode(<<MsgBin/binary>>),
+%   ?debugFmt("~n~nreceive message: ~p~n", [OfpMsg]),
+    {OfpMsg, LeftOvers}.
+
+send_msg(Socket, Msg) ->
+%   ?debugFmt("~n~nsend message: ~p~n", [Msg]),
+    {ok, Bin} = of_protocol:encode(Msg),
+    ok = gen_tcp:send(Socket, Bin).
+
+barrier_reply(XID) ->
+    #ofp_message{
+        version = ?VERSION,
+        type = barrier_reply,
+        xid = XID,
+        body = #ofp_barrier_reply{}
+    }.
+
+features_reply(XID) ->
+    features_reply(XID, ?DATAPATH_ID, 0).
+
+features_reply(XID, DatapathId, AuxId) ->
+    #ofp_message{
+        version = ?VERSION,
+        type = features_reply,
+        xid = XID,
+        body = #ofp_features_reply{
+            datapath_mac = ?DATAPATH_MAC,
+            datapath_id = DatapathId,
+            n_buffers = 0,
+            n_tables = 255,
+            auxiliary_id = AuxId,
+            capabilities = [flow_stats,table_stats,port_stats,group_stats,queue_stats]
+        }
+    }.
+
+packet_in() ->
+    #ofp_message{
+        version = ?VERSION,
+        type = packet_in,
+        body = #ofp_packet_in{
+            buffer_id = no_buffer,
+            reason = action,
+            table_id = 1,
+            cookie = <<0:64>>,
+            match = #ofp_match{fields = []},
+            data = <<"abcd">>
+        }
+    }.
+
+connect_aux(AuxId) ->
+    connect(0, AuxId).
+
+connect() ->
+    connect(0, 0).
+
+connect(DatapathId) ->
+    connect(DatapathId, 0).
+
+connect(DatapathId, AuxId) ->
+    {ok, Socket} = gen_tcp:connect({127,0,0,1}, ?LISTEN_PORT,
+                                            [binary, {active, false}], 5000),
+    send_msg(Socket, of_driver_utils:create_hello([?VERSION])),
+    {#ofp_message{type = hello}, Rest} = receive_msg(Socket, <<>>),
+    {#ofp_message{type = features_request, xid = XID}, <<>>} = receive_msg(Socket, Rest),
+    send_msg(Socket, features_reply(XID, DatapathId, AuxId)),
+    Socket.
+
+future(M, F, A) ->
+    Token = make_ref(),
+    Parent = self(),
+    spawn(fun() -> future_call(Parent, Token, M, F, A) end),
+    Token.
+
+wait_future(Token) ->
+    receive
+        {future, Token, R} -> R
+    end.
+
+future_call(Parent, Token, M, F, A) ->
+    R = apply(M, F, A),
+    Parent ! {future, Token, R}.
