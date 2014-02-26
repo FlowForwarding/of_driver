@@ -33,10 +33,11 @@ of_driver_test_() ->
                                   ,{"send_list", fun send_list/1}
                                   ,{"sync_send_list", fun sync_send_list/1}
                                   ,{"sync_send_list_no_reply", fun sync_send_list_no_reply/1}
+                                  ,{"multiple_sync_send", fun multiple_sync_send/1}
                                   ]]]} end
     }.
 
-% XXX multiple sync sends at the same time
+% XXX messages that can't be encoded
 
 setup() ->
 %   trace(),
@@ -122,7 +123,7 @@ main_terminate() ->
             {ok, aux_callback_state} end),
     meck:expect(of_driver_handler_mock, handle_disconnect, fun(_Reason, aux_callback_state) -> ok end),
     Socket = connect(ExpectedDatapathId),
-    AuxSocket = connect(ExpectedDatapathId, ExpectedAuxId),
+    _AuxSocket = connect(ExpectedDatapathId, ExpectedAuxId),
     gen_tcp:close(Socket),
     ?assert(meck:validate(of_driver_handler_mock)).
 
@@ -156,7 +157,7 @@ close_connection() ->
             Me ! {connection, Connection},
             {ok, callback_state} end),
     meck:expect(of_driver_handler_mock, terminate, fun(_Reason, callback_state) -> ok end),
-    Socket = connect(ExpectedDatapathId),
+    _Socket = connect(ExpectedDatapathId),
     Conn = receive
         {connection, C} ->
             C
@@ -164,7 +165,7 @@ close_connection() ->
     of_driver:close_connection(Conn),
     ?assert(meck:validate(of_driver_handler_mock)).
 
-aux_connect({Socket, _ConnTable}) ->
+aux_connect({_Socket, _ConnTable}) ->
     ExpectedAuxId = 1,
     meck:expect(of_driver_handler_mock, handle_connect,
         fun(_IpAddr, DatapathId, Features, Version, _Connection, AuxId, _Opt) ->
@@ -286,6 +287,25 @@ sync_send_list_no_reply({Socket, ConnTable}) ->
     ?assertMatch({ok, noreply}, Reply1),
     ?assertMatch({ok, #ofp_message{type = features_reply, xid = RXID2}}, Reply2),
     ?assert(meck:validate(of_driver_handler_mock)).
+
+multiple_sync_send({Socket, ConnTable}) ->
+    Connection = get_connection(ConnTable),
+    Msg = of_msg_lib:get_features(4),
+    Future1 = future(of_driver, sync_send, [Connection, Msg]),
+    {#ofp_message{type = features_request, xid = RXID1}, Rest1} = receive_msg(Socket, <<>>),
+    {#ofp_message{type = barrier_request, xid = BXID1}, <<>>} = receive_msg(Socket, Rest1),
+    Future2 = future(of_driver, sync_send, [Connection, Msg]),
+    {#ofp_message{type = features_request, xid = RXID2}, Rest2} = receive_msg(Socket, <<>>),
+    {#ofp_message{type = barrier_request, xid = BXID2}, <<>>} = receive_msg(Socket, Rest2),
+    send_msg(Socket, features_reply(RXID2)),
+    send_msg(Socket, features_reply(RXID1)),
+    send_msg(Socket, barrier_reply(BXID1)),
+    send_msg(Socket, barrier_reply(BXID2)),
+    {ok, Reply1} = wait_future(Future1),
+    {ok, Reply2} = wait_future(Future2),
+    ?assertMatch(#ofp_message{type = features_reply, xid = RXID1}, Reply1),
+    ?assertMatch(#ofp_message{type = features_reply, xid = RXID2}, Reply2),
+    ?assertNot(meck:called(of_driver_handler_mock, handle_message, '_')).
 
 %%------------------------------------------------------------------------------
 

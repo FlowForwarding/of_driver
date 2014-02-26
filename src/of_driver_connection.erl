@@ -10,9 +10,6 @@
 
 -behaviour(gen_server).
 
--export([ sync_call/2 
-    ]).
-
 -export([ start_link/1,
           init/1,
           handle_call/3,
@@ -47,26 +44,10 @@
                  datapath_info           :: { DatapathId :: integer(), DatapathMac :: term() },
                  connection_init = false :: boolean(),
                  handler_state           :: term(),
-                 pending_msgs=[]         :: list({ XIDs :: integer(), OfpMessage :: #ofp_message{} | undefined }),
+                 pending_msgs            :: term(),
                  xid = 0                 :: integer(),
                  startup_leftovers       :: binary()
                }).
-
-%%------------------------------------------------------------------
-
-sync_call(ConnectionPid, Msgs) when is_list(Msgs) ->
-    lists:foreach(fun(Msg) -> 
-                    {ok,_XID} = gen_server:call(ConnectionPid,{send, Msg},infinity) %% TODO, work on timeout scenario
-                  end, Msgs),
-    gen_server:call(ConnectionPid,{send, barrier},infinity);
-sync_call(ConnectionPid, Msg) ->
-    {ok,_XID} = gen_server:call(ConnectionPid,{send, Msg},infinity), %% TODO, work on timeout scenario
-    case gen_server:call(ConnectionPid,{send, barrier},infinity) of
-        {ok, [{ok, Reply}]} ->
-            {ok, Reply};
-        Reply ->
-            Reply
-    end.
 
 %%------------------------------------------------------------------
 
@@ -93,55 +74,48 @@ init([Socket]) ->
                   ctrl_versions       = Versions,
                   protocol            = Protocol,
                   address             = Address,
-                  port                = Port
+                  port                = Port,
+                  pending_msgs        = gb_trees:empty()
                 }}.
 
 %%------------------------------------------------------------------
 
 handle_call(close_connection, _From, State) ->
-    close_of_connection(State,called_close_connection);
-handle_call({send, barrier}, From, #?STATE{version  = Version} = State) ->
+    close_of_connection(State, called_close_connection);
+handle_call({sync_send, OfpMsgs}, From, State =
+                                            #?STATE{xid = XID,
+                                                    version = Version,
+                                                    protocol = Protocol,
+                                                    socket = Socket,
+                                                    pending_msgs = PSM}) ->
     Barrier = of_msg_lib:barrier(Version),
-    XID = handle_send(Barrier, State),
-    {noreply, State#?STATE{ xid          = XID,
-                           pending_msgs = [{XID, From} | State#?STATE.pending_msgs]
-                          }};
-handle_call({send, OfpMsg}, _From, State) ->
-    XID = handle_send(OfpMsg,State),
-    {reply, {ok, XID}, State#?STATE{xid          = XID,
-                                    pending_msgs = [{XID, ?NOREPLY} | State#?STATE.pending_msgs]
-                                   }};
-handle_call(next_xid,_From,#?STATE{ xid = XID } = State) ->
-    NextXID = XID + 1,
-    {reply,{ok,NextXID},State#?STATE{ xid = NextXID}};
-handle_call(pending_msgs,_From,State) -> %% ***DEBUG
-    {reply,{ok,State#?STATE.pending_msgs},State};
-handle_call(state,_From,State) ->
-    {reply,{ok,State},State}.
-
-handle_send(Msg,#?STATE{ protocol = Protocol,
-                         socket   = Socket,
-                         xid      = XID } = _State) ->
-  NextXID = XID+1,
-  {ok,EncodedMessage} = of_protocol:encode( Msg#ofp_message{ xid = NextXID } ),
-  ok = of_driver_utils:send(Protocol,Socket,EncodedMessage),
-  NextXID.
+    {NewXID, EncodedMessages} = encode_msgs(XID,
+                                        lists:append(OfpMsgs, [Barrier])),
+    XIDs = send_msgs(Protocol, Socket, EncodedMessages),
+    NewPSM = pending_msgs(From, XIDs, PSM),
+    {noreply, State#?STATE{xid = NewXID, pending_msgs = NewPSM}};
+handle_call(next_xid, _From, #?STATE{ xid = XID } = State) ->
+    {reply, {ok, XID}, State#?STATE{xid = XID + 1}};
+handle_call(pending_msgs, _From, State) -> %% ***DEBUG
+    {reply,{ok, State#?STATE.pending_msgs}, State};
+handle_call(state, _From, State) ->
+    {reply, {ok, State}, State}.
     
 %%------------------------------------------------------------------
 
-handle_cast({send,hello},State) ->
+handle_cast({send, hello},State) ->
     Versions = of_driver_utils:conf_default(of_compatible_versions, fun erlang:is_list/1, [3, 4]),
     Msg=of_driver_utils:create_hello(Versions),
-    handle_cast_send(Msg,State),
+    handle_cast_send(Msg, State),
     {noreply, State};
-handle_cast({send,Msg},State) ->
-    handle_cast_send(Msg,State),
+handle_cast({send, Msgs},State) ->
+    [handle_cast_send(Msg, State) || Msg <- Msgs],
     {noreply, State}.
 
 handle_cast_send(Msg,#?STATE{ protocol = Protocol,
                               socket   = Socket } = _State) ->
     case of_protocol:encode(Msg) of
-        {ok,EncodedMessage} ->
+        {ok, EncodedMessage} ->
             ok = of_driver_utils:send(Protocol,Socket,EncodedMessage);
         {error, Error} ->
             % XXX communicate this back somehow
@@ -178,6 +152,34 @@ code_change(_OldVsn, State, _Extra) ->
 
 %%-----------------------------------------------------------------------------
 
+pending_msgs(From, XIDs, Pending) ->
+    pending_msgs(From, XIDs, XIDs, Pending).
+
+pending_msgs(From, XIDs, [BarrierXID], Pending) ->
+    gb_trees:insert(BarrierXID, {barrier, From, XIDs}, Pending);
+pending_msgs(From, XIDs, [XID | R], Pending) ->
+    pending_msgs(From, XIDs, R, gb_trees:insert(XID, ?NOREPLY, Pending)).
+
+
+send_msgs(Protocol, Socket, EncodedMsgs) ->
+    XIDs = lists:foldl(
+            fun({X, EM}, L) ->
+                ok = of_driver_utils:send(Protocol, Socket, EM),
+                [X | L]
+            end, [], EncodedMsgs),
+    lists:reverse(XIDs).
+
+encode_msgs(XID, Msgs) ->
+    {NewXID, Ms} = lists:foldl(
+            fun(Msg, {X, L}) ->
+                {ok, EncodedMessage} =
+                    of_protocol:encode(Msg#ofp_message{xid = X}),
+                {X + 1, [{X, EncodedMessage} | L]}
+            end, {XID, []}, Msgs),
+    {NewXID, lists:reverse(Ms)}.
+
+%%-----------------------------------------------------------------------------
+
 do_handle_tcp(State, <<>>) ->
     {noreply, State};
 do_handle_tcp(#?STATE{parser        = undefined,
@@ -188,10 +190,10 @@ do_handle_tcp(#?STATE{parser        = undefined,
                       protocol      = Protocol
                      } = State, Data) ->
     case of_protocol:decode(<<Buffer/binary, Data/binary>>) of
-        {ok, #ofp_message{xid = Xid, body = #ofp_hello{}} = Hello, Leftovers} ->
+        {ok, #ofp_message{xid = XID, body = #ofp_hello{}} = Hello, Leftovers} ->
             case decide_on_version(Versions, Hello) of
                 {failed, Reason} ->
-                    handle_failed_negotiation(Xid, Reason, State);
+                    handle_failed_negotiation(XID, Reason, State);
                 Version ->
                     {ok, Parser} = ofp_parser:new(Version),
                     {ok, FeaturesBin} = of_protocol:encode(create_features_request(Version)),
@@ -199,14 +201,14 @@ do_handle_tcp(#?STATE{parser        = undefined,
                     do_handle_tcp(State#?STATE{parser = Parser,
                                                version = Version}, Leftovers)
             end;
-        {ok, #ofp_message{xid = _Xid, body = _Body} = Msg, Leftovers} ->
+        {ok, #ofp_message{xid = _XID, body = _Body} = Msg, Leftovers} ->
             ?WARNING("Hello handshake in progress, dropping message: ~p~n",[Msg]),
             do_handle_tcp(State, Leftovers);
         {error, binary_too_small} ->
             {noreply, State#?STATE{hello_buffer = <<Buffer/binary,
                                                     Data/binary>>}};
-        {error, unsupported_version, Xid} ->
-            handle_failed_negotiation(Xid, unsupported_version_or_bad_message,
+        {error, unsupported_version, XID} ->
+            handle_failed_negotiation(XID, unsupported_version_or_bad_message,
                                       State)
     end;
 do_handle_tcp(#?STATE{ parser = Parser} = State, Data) ->
@@ -279,37 +281,49 @@ handle_message(#ofp_message{version = Version,
 handle_message(#ofp_message{} = Msg, #?STATE{connection_init = false} = State) ->
     ?WARNING("Features handshake in progress, dropping message: ~p~n",[Msg]),
     State;
-handle_message(Msg, #?STATE{pending_msgs = []} = State) ->
-    % no sync requests to process
-    switch_handler_next_state(Msg, State);
 handle_message(#ofp_message{xid = XID, type = barrier_reply} = Msg,
                                     #?STATE{pending_msgs = PSM} = State) ->
-    case lists:keyfind(XID, 1, PSM) of 
-        {XID, ?NOREPLY} ->
-            % Prevent intentional barrier REPLY's in list of
-            % msg's from trying to gen_server:reply
-            update_response(XID, Msg, PSM, State);
-        {XID, From} ->
-            ReplyListWithoutBarrier = lists:keydelete(XID, 1, PSM),
-            gen_server:reply(From, {ok,
-                lists:reverse([{ok, R} || {_XID, R} <- ReplyListWithoutBarrier])}),
-            State#?STATE{pending_msgs = []}
-    end;
-handle_message(#ofp_message{ xid = XID, type = _Type } = Msg,#?STATE{ pending_msgs = PSM } = State) ->
-    update_response(XID, Msg, PSM, State).
-    
-% XXX is PSM a necessary parameter?  just read from state?
-update_response(XID, Msg, PSM, State) ->
-    case lists:keyfind(XID, 1, PSM) of
-        {XID, ?NOREPLY} ->
-            State#?STATE{pending_msgs = lists:keyreplace(XID, 1, PSM, {XID,Msg})};
-        {XID, _} ->
-            % XXX more than one response - report an error
-            State;
+    case gb_trees:lookup(XID, PSM) of 
+        {value, ?NOREPLY} ->
+            % explicit barrier
+            update_response(XID, Msg, State);
+        {value, {barrier, From, XIDs}} ->
+            SyncResults = get_pending_results(XIDs, PSM),
+            NewPSM = delete_pending_results(XIDs, PSM),
+            gen_server:reply(From, {ok, SyncResults}),
+            State#?STATE{pending_msgs = NewPSM};
         false ->
             % these aren't the droids you're looking for...
             switch_handler_next_state(Msg, State)
+    end;
+handle_message(#ofp_message{xid = XID} = Msg, State) ->
+    update_response(XID, Msg, State).
+    
+update_response(XID, Msg, State = #?STATE{pending_msgs = PSM}) ->
+    case gb_trees:lookup(XID, PSM) of
+        {value, ?NOREPLY} ->
+            State#?STATE{pending_msgs = gb_trees:enter(XID, Msg, PSM)};
+        {value, _} ->
+            % XXX more than one response - report an error
+            State;
+        none ->
+            % these aren't the droids you're looking for...
+            switch_handler_next_state(Msg, State)
     end.
+
+get_pending_results(XIDs, PSM) ->
+    get_pending_results(XIDs, PSM, []).
+
+get_pending_results([_BarrierXID], _PSM, Replies) ->
+    lists:reverse(Replies);
+get_pending_results([XID | Rest], PSM, Replies) ->
+    get_pending_results(Rest, PSM, [{ok, gb_trees:get(XID, PSM)} | Replies]).
+
+delete_pending_results(XIDs, PSM) ->
+    lists:foldl(
+            fun(XID, T) ->
+                gb_trees:delete(XID, T)
+            end, PSM, XIDs).
 
 handle_datapath(#?STATE{ datapath_info = DatapathInfo,
                          aux_id        = AuxID} = State) ->
@@ -403,15 +417,15 @@ greatest_common_version(ControllerVersions, SwitchVersions) ->
     lists:max([CtrlVersion || CtrlVersion <- ControllerVersions,
                               lists:member(CtrlVersion, SwitchVersions)]).
 
-handle_failed_negotiation(Xid, _Reason, #?STATE{socket        = Socket,
+handle_failed_negotiation(XID, _Reason, #?STATE{socket        = Socket,
                                                 ctrl_versions = Versions } = State) ->
-    send_incompatible_version_error(Xid, Socket, tcp,lists:max(Versions)),
+    send_incompatible_version_error(XID, Socket, tcp,lists:max(Versions)),
     close_of_connection(State,failed_version_negotiation).
 
-send_incompatible_version_error(Xid, Socket, Proto, OFVersion) ->
+send_incompatible_version_error(XID, Socket, Proto, OFVersion) ->
     ErrorMessageBody = create_error(OFVersion, hello_failed, incompatible),
     ErrorMessage = #ofp_message{version = OFVersion,
-                                xid     = Xid,
+                                xid     = XID,
                                 body    = ErrorMessageBody},
     {ok, EncodedErrorMessage} = of_protocol:encode(ErrorMessage),
     ok = of_driver_utils:send(Proto, Socket, EncodedErrorMessage).

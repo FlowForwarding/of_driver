@@ -135,7 +135,7 @@
 -spec send(ConnectionPid :: term(), Msg :: #ofp_message{}) ->
                                           ok | {error, Reason :: term()}.
 send(ConnectionPid, #ofp_message{} = Msg) ->
-    gen_server:cast(ConnectionPid,{send,Msg}).
+    gen_server:cast(ConnectionPid, {send, [Msg]}).
 
 %% @doc
 %% Send a list of `Msg' records to a switch via `Connection'.
@@ -149,11 +149,8 @@ send(ConnectionPid, #ofp_message{} = Msg) ->
 %% @end
 -spec send_list(ConnectionPid :: term(), Messages :: list(Msg::#ofp_message{})) -> 
                        ok | {error, [ok | {error, Reason :: term()}]}.
-send_list(_ConnectionPid,[]) ->
-    ok;
-send_list(ConnectionPid,[H|T]) ->
-    gen_server:cast(ConnectionPid,{send,H}),
-    send_list(ConnectionPid,T).
+send_list(ConnectionPid, Msgs) ->
+    gen_server:cast(ConnectionPid, {send,  Msgs}).
 
 %%------------------------------------------------------------------
 
@@ -175,7 +172,12 @@ send_list(ConnectionPid,[H|T]) ->
                        {ok, Reply :: #ofp_message{} | noreply} |
                        {error, Reason :: term()}.
 sync_send(ConnectionPid, #ofp_message{} = Msg) -> 
-    of_driver_connection:sync_call(ConnectionPid, Msg).
+    case gen_server:call(ConnectionPid, {sync_send, [Msg]}) of
+        {ok, [{ok, Reply}]} ->
+            {ok, Reply};
+        Reply ->
+            Reply
+    end.
 
 %% @doc
 %% Send a list of `Msg' records to a switch via `Connection' followed by
@@ -196,7 +198,7 @@ sync_send(ConnectionPid, #ofp_message{} = Msg) ->
                             {ok, [{ok, Reply :: #ofp_message{} | noreply}]} |
                             {error, Reason :: term(), [{ok, Reply :: #ofp_message{} | noreply} | {error, Reason :: term()}]}.
 sync_send_list(ConnectionPid,Msgs) when is_list(Msgs) -> 
-    of_driver_connection:sync_call(ConnectionPid,Msgs).
+    gen_server:call(ConnectionPid, {sync_send, Msgs}).
 
 %%------------------------------------------------------------------
 
@@ -212,7 +214,7 @@ sync_send_list(ConnectionPid,Msgs) when is_list(Msgs) ->
 -spec close_connection(ConnectionPid :: term()) -> ok.
 close_connection(ConnectionPid) -> %% ONLY CLOSE CONNECTION, might be main, or aux
     try 
-      gen_server:call(ConnectionPid,close_connection) 
+      gen_server:call(ConnectionPid, close_connection) 
     catch 
       exit:{normal,{gen_server,call,[ConnectionPid,close_connection]}} ->
         ok
@@ -237,5 +239,5 @@ set_xid(#ofp_message{} = Msg, Xid) ->
 %% @end
 -spec gen_xid(ConnectionPid :: term()) -> {ok,Xid :: integer()}.
 gen_xid(ConnectionPidPid) ->
-    {ok,Xid} = gen_server:call(ConnectionPidPid,next_xid),
+    {ok,Xid} = gen_server:call(ConnectionPidPid, next_xid),
     {ok,Xid}.
