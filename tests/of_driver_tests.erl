@@ -8,6 +8,8 @@
 -define(DATAPATH_ID, 0).
 -define(DATAPATH_MAC, <<8,0,39,150,212,121>>).
 
+-export([trace/0]).
+
 %%------------------------------------------------------------------------------
 
 of_driver_test_() ->
@@ -34,7 +36,8 @@ of_driver_test_() ->
                                   ,{"sync_send_list", fun sync_send_list/1}
                                   ,{"sync_send_list_no_reply", fun sync_send_list_no_reply/1}
                                   ,{"multiple_sync_send", fun multiple_sync_send/1}
-                                  ,{"unsupported_version", fun unsupported_version/1}
+                                  ,{"send_unsupported_version", fun send_unsupported_version/1}
+                                  ,{"sync_send_unsupported_version", fun sync_send_unsupported_version/1}
                                   ,{"send_bad_message", fun send_bad_message/1}
                                   ,{"sync_send_bad_message", fun sync_send_bad_message/1}
                                   ,{"send_list_bad_message", fun send_list_bad_message/1}
@@ -42,7 +45,6 @@ of_driver_test_() ->
                                   ]]]} end
     }.
 
-% XXX messages that can't be encoded
 % XXX unsupported version
 
 setup() ->
@@ -315,11 +317,21 @@ multiple_sync_send({Socket, ConnTable}) ->
     ?assertMatch(#ofp_message{type = features_reply, xid = RXID2}, Reply2),
     ?assertNot(meck:called(of_driver_handler_mock, handle_message, '_')).
 
-unsupported_version({Socket, ConnTable}) ->
-    % XXX
-    ok.
+send_unsupported_version({_Socket, ConnTable}) ->
+    Connection = get_connection(ConnTable),
+    BadMsg = (of_msg_lib:get_features(4))#ofp_message{version = -1},
+    R = of_driver:send(Connection, BadMsg),
+    ?assertMatch({error, unsupported_version}, R).
 
-send_bad_message({Socket, ConnTable}) ->
+sync_send_unsupported_version({Socket, ConnTable}) ->
+    Connection = get_connection(ConnTable),
+    BadMsg = (of_msg_lib:get_features(4))#ofp_message{version = -1},
+    Future = future(of_driver, sync_send, [Connection, BadMsg]),
+    {#ofp_message{type = barrier_request, xid = BXID}, <<>>} = receive_msg(Socket, <<>>),
+    send_msg(Socket, barrier_reply(BXID)),
+    ?assertMatch({error, unsupported_version}, wait_future(Future)).
+
+send_bad_message({_Socket, ConnTable}) ->
     Connection = get_connection(ConnTable),
     R = of_driver:send(Connection, #ofp_message{type = not_a_valid_message, version = 4}),
     ?assertMatch({error, {bad_message, _}}, R).
@@ -337,14 +349,14 @@ send_list_bad_message({Socket, ConnTable}) ->
     BadMsg = #ofp_message{type = not_a_valid_message, version = 4},
     R = of_driver:send_list(Connection, [GoodMsg, BadMsg]),
     ?assertMatch({error, [ok, {error, {bad_message, _}}]}, R),
-    {#ofp_message{type = features_request, xid = RXID}, <<>>} = receive_msg(Socket, <<>>).
+    {#ofp_message{type = features_request}, <<>>} = receive_msg(Socket, <<>>).
 
 sync_send_list_bad_message({Socket, ConnTable}) ->
     Connection = get_connection(ConnTable),
     GoodMsg = of_msg_lib:get_features(4),
     BadMsg = #ofp_message{type = not_a_valid_message, version = 4},
     Future = future(of_driver, sync_send_list, [Connection, [GoodMsg, BadMsg]]),
-    {#ofp_message{type = features_request, xid = RXID}, Rest} = receive_msg(Socket, <<>>),
+    {#ofp_message{type = features_request}, Rest} = receive_msg(Socket, <<>>),
     {#ofp_message{type = barrier_request, xid = BXID}, <<>>} = receive_msg(Socket, Rest),
     send_msg(Socket, barrier_reply(BXID)),
     Reply = wait_future(Future),
