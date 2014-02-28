@@ -94,6 +94,9 @@ handle_call({sync_send, OfpMsgs}, From, State =
     XIDs = send_msgs(Protocol, Socket, EncodedMessages),
     NewPSM = pending_msgs(From, XIDs, PSM),
     {noreply, State#?STATE{xid = NewXID, pending_msgs = NewPSM}};
+handle_call({send, Msgs}, _From, State) ->
+    R = [do_send(Msg, State) || Msg <- Msgs],
+    {reply, R, State};
 handle_call(next_xid, _From, #?STATE{ xid = XID } = State) ->
     {reply, {ok, XID}, State#?STATE{xid = XID + 1}};
 handle_call(pending_msgs, _From, State) -> %% ***DEBUG
@@ -105,22 +108,9 @@ handle_call(state, _From, State) ->
 
 handle_cast({send, hello},State) ->
     Versions = of_driver_utils:conf_default(of_compatible_versions, fun erlang:is_list/1, [3, 4]),
-    Msg=of_driver_utils:create_hello(Versions),
-    handle_cast_send(Msg, State),
-    {noreply, State};
-handle_cast({send, Msgs},State) ->
-    [handle_cast_send(Msg, State) || Msg <- Msgs],
+    Msg = of_driver_utils:create_hello(Versions),
+    do_send(Msg, State),
     {noreply, State}.
-
-handle_cast_send(Msg,#?STATE{ protocol = Protocol,
-                              socket   = Socket } = _State) ->
-    case of_protocol:encode(Msg) of
-        {ok, EncodedMessage} ->
-            ok = of_driver_utils:send(Protocol,Socket,EncodedMessage);
-        {error, Error} ->
-            % XXX communicate this back somehow
-            ?ERROR("bad message: ~p ~p~n", [Error, Msg])
-    end.
 
 %%------------------------------------------------------------------
 
@@ -152,29 +142,46 @@ code_change(_OldVsn, State, _Extra) ->
 
 %%-----------------------------------------------------------------------------
 
-pending_msgs(From, XIDs, Pending) ->
-    pending_msgs(From, XIDs, XIDs, Pending).
+do_send(Msg, #?STATE{protocol = Protocol,
+                     socket   = Socket} = _State) ->
+    case of_protocol:encode(Msg) of
+        {ok, EncodedMessage} ->
+            of_driver_utils:send(Protocol, Socket, EncodedMessage);
+        {error, Error} ->
+            {error, Error}
+    end.
 
-pending_msgs(From, XIDs, [BarrierXID], Pending) ->
-    gb_trees:insert(BarrierXID, {barrier, From, XIDs}, Pending);
-pending_msgs(From, XIDs, [XID | R], Pending) ->
-    pending_msgs(From, XIDs, R, gb_trees:insert(XID, ?NOREPLY, Pending)).
+pending_msgs(From, XIDStatus, Pending) ->
+    pending_msgs(From, XIDStatus, XIDStatus, Pending).
 
+pending_msgs(From, XIDStatus, [{BarrierXID, _}], Pending) ->
+    % XXX check for barrier error
+    gb_trees:insert(BarrierXID, {barrier, From, XIDStatus}, Pending);
+pending_msgs(From, XIDStatus, [{XID, Status} | R], Pending) ->
+    ReplyStatus = case Status of ok -> ?NOREPLY; RS -> RS end,
+    pending_msgs(From, XIDStatus, R,
+                                gb_trees:insert(XID, ReplyStatus, Pending)).
 
 send_msgs(Protocol, Socket, EncodedMsgs) ->
-    XIDs = lists:foldl(
-            fun({X, EM}, L) ->
-                ok = of_driver_utils:send(Protocol, Socket, EM),
-                [X | L]
-            end, [], EncodedMsgs),
-    lists:reverse(XIDs).
+    [
+        case A of
+            {_X, {error, _Error}} ->
+                A;
+            {X, EM} ->
+                R = of_driver_utils:send(Protocol, Socket, EM),
+                {X, R}
+        end || A <- EncodedMsgs].
 
 encode_msgs(XID, Msgs) ->
     {NewXID, Ms} = lists:foldl(
             fun(Msg, {X, L}) ->
-                {ok, EncodedMessage} =
-                    of_protocol:encode(Msg#ofp_message{xid = X}),
-                {X + 1, [{X, EncodedMessage} | L]}
+                M = case of_protocol:encode(Msg#ofp_message{xid = X}) of
+                    {ok, EncodedMessage} ->
+                        EncodedMessage;
+                    {error, Error} ->
+                        {error, Error}
+                end,
+                {X + 1, [{X, M} | L]}
             end, {XID, []}, Msgs),
     {NewXID, lists:reverse(Ms)}.
 
@@ -287,10 +294,10 @@ handle_message(#ofp_message{xid = XID, type = barrier_reply} = Msg,
         {value, ?NOREPLY} ->
             % explicit barrier
             update_response(XID, Msg, State);
-        {value, {barrier, From, XIDs}} ->
-            SyncResults = get_pending_results(XIDs, PSM),
-            NewPSM = delete_pending_results(XIDs, PSM),
-            gen_server:reply(From, {ok, SyncResults}),
+        {value, {barrier, From, XIDStatus}} ->
+            SyncResults = get_pending_results(XIDStatus, PSM),
+            NewPSM = delete_pending_results(XIDStatus, PSM),
+            gen_server:reply(From, SyncResults),
             State#?STATE{pending_msgs = NewPSM};
         false ->
             % these aren't the droids you're looking for...
@@ -311,19 +318,23 @@ update_response(XID, Msg, State = #?STATE{pending_msgs = PSM}) ->
             switch_handler_next_state(Msg, State)
     end.
 
-get_pending_results(XIDs, PSM) ->
-    get_pending_results(XIDs, PSM, []).
+get_pending_results(XIDStatus, PSM) ->
+    get_pending_results(XIDStatus, PSM, []).
 
-get_pending_results([_BarrierXID], _PSM, Replies) ->
+get_pending_results([{_BarrierXID, _}], _PSM, Replies) ->
     lists:reverse(Replies);
-get_pending_results([XID | Rest], PSM, Replies) ->
-    get_pending_results(Rest, PSM, [{ok, gb_trees:get(XID, PSM)} | Replies]).
+get_pending_results([{XID, _} | Rest], PSM, Replies) ->
+    R = case gb_trees:get(XID, PSM) of
+        Error = {error, _} -> Error;
+        Response -> {ok, Response}
+    end,
+    get_pending_results(Rest, PSM, [R | Replies]).
 
-delete_pending_results(XIDs, PSM) ->
+delete_pending_results(XIDStatus, PSM) ->
     lists:foldl(
-            fun(XID, T) ->
+            fun({XID, _Status}, T) ->
                 gb_trees:delete(XID, T)
-            end, PSM, XIDs).
+            end, PSM, XIDStatus).
 
 handle_datapath(#?STATE{ datapath_info = DatapathInfo,
                          aux_id        = AuxID} = State) ->

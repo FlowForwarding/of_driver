@@ -135,7 +135,8 @@
 -spec send(ConnectionPid :: term(), Msg :: #ofp_message{}) ->
                                           ok | {error, Reason :: term()}.
 send(ConnectionPid, #ofp_message{} = Msg) ->
-    gen_server:cast(ConnectionPid, {send, [Msg]}).
+    [Reply] = gen_server:call(ConnectionPid, {send, [Msg]}),
+    Reply.
 
 %% @doc
 %% Send a list of `Msg' records to a switch via `Connection'.
@@ -150,7 +151,11 @@ send(ConnectionPid, #ofp_message{} = Msg) ->
 -spec send_list(ConnectionPid :: term(), Messages :: list(Msg::#ofp_message{})) -> 
                        ok | {error, [ok | {error, Reason :: term()}]}.
 send_list(ConnectionPid, Msgs) ->
-    gen_server:cast(ConnectionPid, {send,  Msgs}).
+    Replies = gen_server:call(ConnectionPid, {send,  Msgs}),
+    case lists:all(fun(ok) -> true; (_) -> false end, Replies) of
+        true -> ok;
+        _ -> {error, Replies}
+    end.
 
 %%------------------------------------------------------------------
 
@@ -172,12 +177,8 @@ send_list(ConnectionPid, Msgs) ->
                        {ok, Reply :: #ofp_message{} | noreply} |
                        {error, Reason :: term()}.
 sync_send(ConnectionPid, #ofp_message{} = Msg) -> 
-    case gen_server:call(ConnectionPid, {sync_send, [Msg]}) of
-        {ok, [{ok, Reply}]} ->
-            {ok, Reply};
-        Reply ->
-            Reply
-    end.
+    [Reply] = gen_server:call(ConnectionPid, {sync_send, [Msg]}),
+    Reply.
 
 %% @doc
 %% Send a list of `Msg' records to a switch via `Connection' followed by
@@ -196,9 +197,14 @@ sync_send(ConnectionPid, #ofp_message{} = Msg) ->
 %% @end
 -spec sync_send_list(ConnectionPid :: term(),Messages :: list(Msg::#ofp_message{})) -> 
                             {ok, [{ok, Reply :: #ofp_message{} | noreply}]} |
-                            {error, Reason :: term(), [{ok, Reply :: #ofp_message{} | noreply} | {error, Reason :: term()}]}.
+                            {error, [{ok, Reply :: #ofp_message{} | noreply} | {error, Reason :: term()}]}.
 sync_send_list(ConnectionPid,Msgs) when is_list(Msgs) -> 
-    gen_server:call(ConnectionPid, {sync_send, Msgs}).
+    Replies = gen_server:call(ConnectionPid, {sync_send, Msgs}),
+    Status = case lists:all(fun({ok, _}) -> true; (_) -> false end, Replies) of
+        true -> ok;
+        _ -> error
+    end,
+    {Status, Replies}.
 
 %%------------------------------------------------------------------
 
