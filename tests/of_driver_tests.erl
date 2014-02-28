@@ -19,14 +19,14 @@ of_driver_test_() ->
      fun(S) ->
         {foreach, fun test_setup/0,
          [{"set_xid",             fun set_xid/0},
-          {"gen_xid",             fun gen_xid/0},
           {"main_connect", fun main_connect/0},
           {"main_terminate", fun main_terminate/0},
           {"early_message", fun early_message/0},
           {"close_connection", fun close_connection/0}|
           [{N, fun() -> F(S) end}
                      || {N, F} <- [
-                                   {"aux_connect", fun aux_connect/1}
+                                   {"gen_xid",             fun gen_xid/1}
+                                  ,{"aux_connect", fun aux_connect/1}
                                   ,{"in_message", fun in_message/1}
                                   ,{"send", fun send/1}
                                   ,{"sync_send", fun sync_send/1}
@@ -88,10 +88,6 @@ trace() ->
 %%------------------------------------------------------------------------------
 
 set_xid() ->
-    % XXX
-    true.
-
-gen_xid() ->
     % XXX
     true.
 
@@ -174,6 +170,16 @@ close_connection() ->
     end,
     of_driver:close_connection(Conn),
     ?assert(meck:validate(of_driver_handler_mock)).
+
+gen_xid({_Socket, ConnTable}) ->
+    Connection = get_connection(ConnTable),
+    Count = 4,
+    Set = lists:foldl(
+                fun(_C, S) ->
+                    sets:add_element(of_driver:gen_xid(Connection), S)
+                end, sets:new(), lists:seq(1, Count)),
+    ?debugVal(sets:to_list(Set)),
+    ?assertEqual(Count, sets:size(Set)).
 
 aux_connect({_Socket, _ConnTable}) ->
     ExpectedAuxId = 1,
