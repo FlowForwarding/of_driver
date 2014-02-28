@@ -231,7 +231,7 @@ close_connection(ConnectionPid) -> %% ONLY CLOSE CONNECTION, might be main, or a
 %% @end
 -spec set_xid(Msg :: #ofp_message{}, Xid :: integer()) -> {ok,#ofp_message{}}.
 set_xid(#ofp_message{} = Msg, Xid) -> 
-    {ok,Msg#ofp_message{ xid = Xid}}.
+    Msg#ofp_message{xid = Xid}.
 
 %% @doc
 %% Generate a unique Xid for Connection.  The callback Module may use

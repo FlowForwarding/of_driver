@@ -45,8 +45,6 @@ of_driver_test_() ->
                                   ]]]} end
     }.
 
-% XXX unsupported version
-
 setup() ->
     ok = meck:new(of_driver_handler_mock, [passthrough]),
     ConnTable = ets:new(conn_table, [set, public]),
@@ -88,8 +86,11 @@ trace() ->
 %%------------------------------------------------------------------------------
 
 set_xid() ->
-    % XXX
-    true.
+    NewXid = 9999,
+    Msg = of_msg_lib:get_features(4),
+    ?assertNotEqual(NewXid, Msg#ofp_message.xid),
+    NewMsg = of_driver:set_xid(Msg, NewXid),
+    ?assertEqual(NewXid, NewMsg#ofp_message.xid).
 
 main_connect() ->
     ExpectedDatapathId = 1,
