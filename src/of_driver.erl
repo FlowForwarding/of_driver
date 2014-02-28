@@ -27,7 +27,7 @@
 %%% messages from the switch in this many milliseconds; default is 5000.
 %%% 
 %%% `multipart_timeout' - Maximum number of milliseconds to wait for
-%%% the final part of a multipart message; default is 30000.
+%%% the final part of a multipart message; default is 30000. [not implemented]
 %%% 
 %%% `callback_module' - of_driver callback module.
 %%% 
@@ -172,6 +172,8 @@ send_list(ConnectionPid, Msgs) ->
 %% reported as an error. An error return may also indicate that of_driver
 %% was unable to deliver the message to the switch.  `Module:handle_message/2'
 %% is not called for replies.
+%% This call is concurrency safe.  That is, there may be more than one
+%% `of_driver:sync_send/2' call in progress at the same time.
 %% @end
 -spec sync_send(ConnectionPid :: term(), Msg :: #ofp_message{}) -> 
                        {ok, Reply :: #ofp_message{} | noreply} |
@@ -194,8 +196,10 @@ sync_send(ConnectionPid, #ofp_message{} = Msg) ->
 %% reported as an error.  An error may also indicate that of_driver
 %% was unable to deliver the messages to the switch.  `Module:handle_message/2'
 %% is not called for any replies.
+%% This call is concurrency safe.  That is, there may be more than one
+%% `of_driver:sync_send_list/2' call in progress at the same time.
 %% @end
--spec sync_send_list(ConnectionPid :: term(),Messages :: list(Msg::#ofp_message{})) -> 
+-spec sync_send_list(ConnectionPid :: term(), Messages :: list(Msg::#ofp_message{})) -> 
                             {ok, [{ok, Reply :: #ofp_message{} | noreply}]} |
                             {error, [{ok, Reply :: #ofp_message{} | noreply} | {error, Reason :: term()}]}.
 sync_send_list(ConnectionPid,Msgs) when is_list(Msgs) -> 
@@ -234,14 +238,20 @@ set_xid(#ofp_message{} = Msg, Xid) ->
     Msg#ofp_message{xid = Xid}.
 
 %% @doc
-%% Generate a unique Xid for Connection.  The callback Module may use
+%% Generate a unique Xid for Connection.  The code sending messages may use
 %% this function to generate a unique Xid for a `Connection', or the
-%% callback Module may use a method of its own choosing.  Recommendation:
-%% if there is only one pid using the Connection, Module can use its
-%% own code to create unique Xid.  If there are more then one pid
-%% using a single `Connection', Module should use `of_driver:gen_xid/1' (or
+%% callback Module may use a method of its own choosing.  
+%% `of_driver:sync_send/2' and
+%% `of_driver:sync_send_list/2' use this mechanism to generate unique Xids.
+%% Recommendation:
+%% if there is only one pid using the Connection, your can use its
+%% own code to create unique Xid.  If there is more then one pid
+%% using a single `Connection', your code should use `of_driver:gen_xid/1' (or
 %% some other intra-pid coordination) to generate unique Xids for the
-%% `Connection'.
+%% `Connection'.  You should use `of_driver:gen_xid/1' if you are mixing
+%% `of_driver:send/2' and `of_driver:send_list/2' calls with 
+%% `of_driver:sync_send/2' and
+%% `of_driver:sync_send_list/2' calls to avoid duplicate Xids.
 %% @end
 -spec gen_xid(ConnectionPid :: term()) -> {ok,Xid :: integer()}.
 gen_xid(ConnectionPidPid) ->
