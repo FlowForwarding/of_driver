@@ -21,7 +21,6 @@
 -copyright("2013, Erlang Solutions Ltd.").
 
 -include_lib("of_driver/include/of_driver.hrl").
--include_lib("of_driver/include/echo_handler_logic.hrl").
 
 %% DB API to seperate DB infrastructure from LOOM.
 
@@ -45,8 +44,7 @@ install() ->
     end.
 
 install_try() ->
-    [install_try_ets(Tbl, table_opt(Tbl)) || Tbl <- [?DATAPATH_TBL,
-                                                     ?ECHO_HANDLER_TBL]].
+    [install_try_ets(Tbl, table_opt(Tbl)) || Tbl <- [?DATAPATH_TBL]].
 
 install_try_ets(Tbl, TblOpts) ->
     case ets:info(Tbl) of
@@ -54,8 +52,6 @@ install_try_ets(Tbl, TblOpts) ->
         _ExistingTblOptions -> ok
     end.
 
-table_opt(?ECHO_HANDLER_TBL) ->
-    [named_table, ordered_set, {keypos, 2}, public];
 table_opt(?DATAPATH_TBL) ->
     [bag, public, named_table];
 table_opt(_) ->
