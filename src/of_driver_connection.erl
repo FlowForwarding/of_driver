@@ -22,13 +22,16 @@
 
 -behaviour(gen_server).
 
--export([ start_link/1,
-          init/1,
-          handle_call/3,
-          handle_cast/2,
-          handle_info/2,
-          terminate/2,
-          code_change/3
+-export([idle_check/1,
+         ping_timeout/1]).
+
+-export([start_link/1,
+         init/1,
+         handle_call/3,
+         handle_cast/2,
+         handle_info/2,
+         terminate/2,
+         code_change/3
         ]).
 
 -define(STATE, of_driver_connection_state).
@@ -42,10 +45,15 @@
 
 -record(?STATE,{ switch_handler          :: atom(),
                  switch_handler_opts     :: list(),
+                 ping_timeout            :: integer(),
+                 ping_idle               :: integer(),
+                 ping_xid                :: integer(),
+                 ping_timeout_timer      :: term(),
+                 idle_poll_interval      :: integer(),
+                 multipart_timeout       :: integer(),
                  socket                  :: inet:socket(),
                  ctrl_versions           :: list(),
                  version                 :: integer(),
-                 pid                     :: pid(),
                  main_monitor            :: reference(),
                  address                 :: inet:ip_address(),
                  port                    :: port(),
@@ -58,8 +66,18 @@
                  handler_state           :: term(),
                  pending_msgs            :: term(),
                  xid = 0                 :: integer(),
-                 startup_leftovers       :: binary()
+                 startup_leftovers       :: binary(),
+                 idle_timer_poller       :: term(),
+                 last_receive            :: term()
                }).
+
+%%------------------------------------------------------------------
+
+idle_check(ServerPid) ->
+    gen_server:cast(ServerPid, idle_check).
+
+ping_timeout(ServerPid) ->
+    gen_server:cast(ServerPid, ping_timeout).
 
 %%------------------------------------------------------------------
 
@@ -70,24 +88,31 @@ init([Socket]) ->
     Protocol = tcp,
     of_driver_utils:setopts(Protocol, Socket, [{active, once}]),
     {ok, {Address, Port}} = inet:peername(Socket),
-    SwitchHandler = of_driver_utils:conf_default(callback_module, of_driver_default_handler),
-    Opts          = of_driver_utils:conf_default(init_opt,[ {enable_ping,false},
-                                                            {ping_timeout,1000},
-                                                            {ping_idle,5000},
-                                                            {multipart_timeout,30000},
-                                                            {callback_mod,echo_logic}
-                                                          ]),
+    SwitchHandler = of_driver_utils:conf_default(callback_module, fun erlang:is_atom/1, of_driver_default_handler),
+    PingEnable = of_driver_utils:conf_default(enable_ping, fun erlang:is_atom/1, false),
+    PingTimeout = of_driver_utils:conf_default(ping_timeout, fun erlang:is_integer/1, 1000),
+    PingIdle = of_driver_utils:conf_default(ping_idle, fun erlang:is_integer/1, 5000),
+    IdlePollInt = of_driver_utils:conf_default(idle_timeout_poll, fun erlang:is_integer/1, 1000),
+    MultipartTimeout = of_driver_utils:conf_default(multipart_timeout, fun erlang:is_integer/1, 30000),
+    Opts = of_driver_utils:conf_default(init_opt, []),
     ?INFO("Connected to Switch on ~s:~p. Connection : ~p \n",[inet_parse:ntoa(Address), Port, self()]),
     Versions = of_driver_utils:conf_default(of_compatible_versions, fun erlang:is_list/1, [3, 4]),
-    ok = gen_server:cast(self(),{send,hello}),
+    ok = gen_server:cast(self(), {send, hello}),
+    ITRef = maybe_idle_check(PingEnable, IdlePollInt),
     {ok, #?STATE{ switch_handler      = SwitchHandler,
                   switch_handler_opts = Opts,
+                  ping_timeout        = PingTimeout,
+                  ping_idle           = PingIdle,
+                  idle_poll_interval  = IdlePollInt,
+                  multipart_timeout   = MultipartTimeout,
                   socket              = Socket,
                   ctrl_versions       = Versions,
                   protocol            = Protocol,
                   address             = Address,
                   port                = Port,
-                  pending_msgs        = gb_trees:empty()
+                  pending_msgs        = gb_trees:empty(),
+                  idle_timer_poller   = ITRef,
+                  last_receive        = now()
                 }}.
 
 %%------------------------------------------------------------------
@@ -110,7 +135,8 @@ handle_call({send, Msgs}, _From, State) ->
     R = [do_send(Msg, State) || Msg <- Msgs],
     {reply, R, State};
 handle_call(next_xid, _From, #?STATE{ xid = XID } = State) ->
-    {reply, {ok, XID}, State#?STATE{xid = XID + 1}};
+    {XID, NewState} = next_xid(State),
+    {reply, {ok, XID}, NewState};
 handle_call(pending_msgs, _From, State) -> %% ***DEBUG
     {reply,{ok, State#?STATE.pending_msgs}, State};
 handle_call(state, _From, State) ->
@@ -118,11 +144,16 @@ handle_call(state, _From, State) ->
     
 %%------------------------------------------------------------------
 
-handle_cast({send, hello},State) ->
+handle_cast({send, hello}, State) ->
     Versions = of_driver_utils:conf_default(of_compatible_versions, fun erlang:is_list/1, [3, 4]),
     Msg = of_driver_utils:create_hello(Versions),
     do_send(Msg, State),
-    {noreply, State}.
+    {noreply, State};
+handle_cast(idle_check, State) ->
+    NewState = maybe_ping(State),
+    {noreply, NewState};
+handle_cast(ping_timeout, State) ->
+    close_of_connection(State, ping_timeout).
 
 %%------------------------------------------------------------------
 
@@ -154,10 +185,41 @@ code_change(_OldVsn, State, _Extra) ->
 
 %%-----------------------------------------------------------------------------
 
+next_xid(#?STATE{xid = XID} = State) ->
+    {XID, State#?STATE{xid = XID + 1}}.
+
+maybe_ping(#?STATE{
+                connection_init = true,
+                ping_idle = PingIdle,
+                last_receive = LastReceive,
+                ping_xid = undefined} = State) ->
+    case timer:now_diff(now(), LastReceive) > 1000 * PingIdle of
+        false ->
+            State;
+        _ ->
+            send_ping(State)
+    end;
+maybe_ping(State) ->
+    % don't send until conneciton is initialized or when
+    % another ping while one is outstanding.
+    State.
+
+send_ping(#?STATE{version = Version, ping_timeout = PingTimeout} = State) ->
+    {Xid, NewState} = next_xid(State),
+    Echo = of_driver:set_xid(of_msg_lib:echo_request(Version, <<>>), Xid),
+    do_send(Echo, State),
+    {ok, TRef} = timer:apply_after(PingTimeout, ?MODULE, ping_timeout, [self()]),
+    NewState#?STATE{ping_xid = Xid, ping_timeout_timer = TRef}.
+
+receive_ping(#?STATE{ping_timeout_timer = TRef} = State) ->
+    {ok, cancel} = timer:cancel(TRef),
+    State#?STATE{ping_timeout_timer = undefined, ping_xid = undefined}.
+
 do_send(Msg, #?STATE{protocol = Protocol,
                      socket   = Socket} = _State) ->
     case of_protocol:encode(Msg) of
         {ok, EncodedMessage} ->
+            ?DEBUG("Send: ~p~n", [Msg]),
             of_driver_utils:send(Protocol, Socket, EncodedMessage);
         {error, Error} ->
             {error, Error}
@@ -234,8 +296,10 @@ do_handle_tcp(#?STATE{ parser = Parser} = State, Data) ->
     case ofp_parser:parse(Parser, Data) of
         {ok, NewParser, Messages} ->
             case handle_messages(Messages, State) of
-                {ok,NewState} ->
-                    {noreply, NewState#?STATE{parser = NewParser}};
+                {ok, NewState} ->
+                    {noreply, NewState#?STATE{
+                                        parser = NewParser,
+                                        last_receive = now()}};
                 {stop, Reason, NewState} ->
                     {stop, Reason, NewState}
             end;
@@ -246,6 +310,7 @@ do_handle_tcp(#?STATE{ parser = Parser} = State, Data) ->
 handle_messages([], NewState) ->
     {ok, NewState};
 handle_messages([Message|Rest], NewState) ->
+    ?DEBUG("Receive: ~p~n", [Message]),
     case handle_message(Message, NewState) of
         {stop, Reason, State} ->
             {stop, Reason, State};
@@ -315,6 +380,9 @@ handle_message(#ofp_message{xid = XID, type = barrier_reply} = Msg,
             % these aren't the droids you're looking for...
             switch_handler_next_state(Msg, State)
     end;
+handle_message(#ofp_message{xid = XID, type = echo_reply},
+                                        #?STATE{ping_xid = XID} = State) ->
+    receive_ping(State);
 handle_message(#ofp_message{xid = XID} = Msg, State) ->
     update_response(XID, Msg, State).
     
@@ -469,3 +537,10 @@ do_callback(M, F, A, State) ->
         {error, Reason} ->
             {stop, Reason, State}
     end.
+
+maybe_idle_check(true, IdlePollInt) ->
+    {ok, ITRef} = timer:apply_interval(IdlePollInt,
+                                            ?MODULE, idle_check, [self()]),
+    ITRef;
+maybe_idle_check(_, _IdlePollInt) ->
+    undefined.
