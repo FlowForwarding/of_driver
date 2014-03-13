@@ -17,39 +17,36 @@
 %% @author Erlang Solutions Ltd. <openflow@erlang-solutions.com>
 %% @copyright 2014 FlowForwarding.org
 
--module(of_driver_switch_connection).
+-module(of_driver_handler_mock).
 
--include_lib("of_driver/include/of_driver.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
--export([ 
-	insert_switch_connection/4,
-	remove_switch_connection/2,
-	lookup_connection_pid/1,
-	main_pid/1
+-export([
+    init/6,
+    handle_connect/7,
+    handle_message/2,
+    handle_error/2,
+    handle_disconnect/2,
+    terminate/2
 ]).
 
-insert_switch_connection(IpAddr,Port,ConnectionPID,ConnRole) ->
-	true = ets:insert_new(?SWITCH_CONN_TBL,{{IpAddr,Port},ConnectionPID,ConnRole}),
-	ok.
+% init param is the ets table to capture the connection
+init(_IpAddr, _DataPathId, _Features, _Version, Connection, ConnTable) ->
+    true = ets:insert(ConnTable, {0, Connection}),
+    {ok, callback_state}.
 
-remove_switch_connection(IpAddr,Port) ->
-	true = ets:delete(?SWITCH_CONN_TBL,{IpAddr,Port}),
-	ok.
+handle_connect(_IpAddr, _DataPathId, _Features, _Version, Connection, AuxId, ConnTable) ->
+    true = ets:insert(ConnTable, {AuxId, Connection}),
+    {ok, callback_state}.
 
-lookup_connection_pid(IpAddr) ->
-	ets:match(?SWITCH_CONN_TBL,{{IpAddr,'$1'},'$2','$3'}).
+handle_message(_Msg, State) ->
+    {ok, State}.
 
-main_pid(IpAddr) ->
-	case ets:match(?SWITCH_CONN_TBL,{{IpAddr,'$1'},'$2','$3'}) of 
-		[] ->
-			false;
-		Entries ->
-			find_main(Entries)
-	end.
+handle_error(_Msg, State) ->
+    {ok, State}.
 
-find_main([]) ->
-	false;
-find_main([H=[_Port,Pid,main]|T]) ->
-	H;
-find_main([H=[_Port,Pid,aux]|T]) ->
-	find_main(T).
+handle_disconnect(_Reason, _State) ->
+    ok.
+
+terminate(_Reason, _State) ->
+    ok.

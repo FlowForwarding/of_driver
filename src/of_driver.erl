@@ -43,7 +43,7 @@
 %%% messages from the switch in this many milliseconds; default is 5000.
 %%% 
 %%% `multipart_timeout' - Maximum number of milliseconds to wait for
-%%% the final part of a multipart message; default is 30000.
+%%% the final part of a multipart message; default is 30000. [not implemented]
 %%% 
 %%% `callback_module' - of_driver callback module.
 %%% 
@@ -128,75 +128,14 @@
 -include_lib("of_driver/include/of_driver.hrl").
 -include_lib("of_driver/include/of_driver_logger.hrl").
 
--export([ allowed_ipaddr/1,
-          grant_ipaddr/1,
-          grant_ipaddr/3,
-          revoke_ipaddr/1,
-          get_allowed_ipaddrs/0,
-          set_allowed_ipaddrs/1,
-          send/2,
+-export([ send/2,
           send_list/2,
           sync_send/2,
           sync_send_list/2,
           close_connection/1,
-          close_ipaddr/1,
           set_xid/2,
           gen_xid/1
         ]).
-
-%%------------------------------------------------------------------
-% @hidden
--spec allowed_ipaddr(IpAddr :: inet:ip_address()) -> ok | {error,einval}.
-allowed_ipaddr(IpAddr) ->
-    of_driver_db:allowed(IpAddr).
-
-% @hidden
--spec grant_ipaddr(IpAddr :: inet:ip_address()) -> ok | {error, einval}.
-grant_ipaddr(IpAddr) ->
-    % XXX might be better to apply defaults on read so old defaults are
-    % not stored in the database
-    CallbackMod = of_driver_utils:conf_default(callback_module,
-                            fun erlang:is_atom/1, of_driver_default_handler),
-    Opts = of_driver_utils:conf_default(init_opt, []),
-    grant_ipaddr(IpAddr, CallbackMod, Opts).
-
-% @hidden
--spec grant_ipaddr(IpAddr        :: inet:ip_address(), 
-                   SwitchHandler :: term(),
-                   Opts          :: list()) -> ok | {error, einval}.
-grant_ipaddr(IpAddr, SwitchHandler, Opts) ->
-    of_driver_db:grant_ipaddr(IpAddr, SwitchHandler, Opts).
-
-% @hidden
--spec revoke_ipaddr(IpAddr :: inet:ip_address()) -> ok | {error, einval}.
-revoke_ipaddr(any) ->
-    lists:foreach(fun({{_IpAddr,_Port},Pid,_ConnType}) -> close_connection(Pid) end,ets:tab2list(?SWITCH_CONN_TBL) ),
-    of_driver_db:revoke_ipaddr(any);
-revoke_ipaddr(IpAddr) -> 
-    case of_driver_switch_connection:lookup_connection_pid(IpAddr) of 
-        []      -> ok;
-        Entries -> lists:foreach(fun([_Port,Pid,_ConnType]) -> close_connection(Pid) end,Entries)
-    end,
-    of_driver_db:revoke_ipaddr(IpAddr).
-
-% @hidden
--spec get_allowed_ipaddrs() -> [] | [allowance()].
-get_allowed_ipaddrs() ->
-    of_driver_db:get_allowed_ipaddrs().
-
-% @hidden
--spec set_allowed_ipaddrs(Allowances :: list(allowance())) -> ok.
-set_allowed_ipaddrs(Allowances) when is_list(Allowances) ->
-    %% TODO: Close any existing connections from IpAddr that was removed.
-    lists:map(fun({IpAddr,_SwitchHandler,_Opts}) -> inet_parse:ntoa(IpAddr) end, Allowances), %% Validation could be improved.
-    PrevAllowed = of_driver_db:get_allowed_ipaddrs(),
-    of_driver_db:clear_acl_list(),
-    lists:foreach(fun({IpAddr,SwitchHandler,Opts}) ->
-                        grant_ipaddr(IpAddr,SwitchHandler,Opts);
-                     (_) ->
-                        ok
-                  end, Allowances),
-    PrevAllowed.
 
 %%------------------------------------------------------------------
 
@@ -212,7 +151,8 @@ set_allowed_ipaddrs(Allowances) when is_list(Allowances) ->
 -spec send(ConnectionPid :: term(), Msg :: #ofp_message{}) ->
                                           ok | {error, Reason :: term()}.
 send(ConnectionPid, #ofp_message{} = Msg) ->
-    gen_server:cast(ConnectionPid,{send,Msg}).
+    [Reply] = gen_server:call(ConnectionPid, {send, [Msg]}),
+    Reply.
 
 %% @doc
 %% Send a list of `Msg' records to a switch via `Connection'.
@@ -226,11 +166,12 @@ send(ConnectionPid, #ofp_message{} = Msg) ->
 %% @end
 -spec send_list(ConnectionPid :: term(), Messages :: list(Msg::#ofp_message{})) -> 
                        ok | {error, [ok | {error, Reason :: term()}]}.
-send_list(_ConnectionPid,[]) ->
-    ok;
-send_list(ConnectionPid,[H|T]) ->
-    gen_server:cast(ConnectionPid,{send,H}),
-    send_list(ConnectionPid,T).
+send_list(ConnectionPid, Msgs) ->
+    Replies = gen_server:call(ConnectionPid, {send,  Msgs}),
+    case lists:all(fun(ok) -> true; (_) -> false end, Replies) of
+        true -> ok;
+        _ -> {error, Replies}
+    end.
 
 %%------------------------------------------------------------------
 
@@ -247,12 +188,15 @@ send_list(ConnectionPid,[H|T]) ->
 %% reported as an error. An error return may also indicate that of_driver
 %% was unable to deliver the message to the switch.  `Module:handle_message/2'
 %% is not called for replies.
+%% This call is concurrency safe.  That is, there may be more than one
+%% `of_driver:sync_send/2' call in progress at the same time.
 %% @end
 -spec sync_send(ConnectionPid :: term(), Msg :: #ofp_message{}) -> 
                        {ok, Reply :: #ofp_message{} | noreply} |
                        {error, Reason :: term()}.
 sync_send(ConnectionPid, #ofp_message{} = Msg) -> 
-    of_driver_connection:sync_call(ConnectionPid,Msg).
+    [Reply] = gen_server:call(ConnectionPid, {sync_send, [Msg]}),
+    Reply.
 
 %% @doc
 %% Send a list of `Msg' records to a switch via `Connection' followed by
@@ -268,12 +212,19 @@ sync_send(ConnectionPid, #ofp_message{} = Msg) ->
 %% reported as an error.  An error may also indicate that of_driver
 %% was unable to deliver the messages to the switch.  `Module:handle_message/2'
 %% is not called for any replies.
+%% This call is concurrency safe.  That is, there may be more than one
+%% `of_driver:sync_send_list/2' call in progress at the same time.
 %% @end
--spec sync_send_list(ConnectionPid :: term(),Messages :: list(Msg::#ofp_message{})) -> 
+-spec sync_send_list(ConnectionPid :: term(), Messages :: list(Msg::#ofp_message{})) -> 
                             {ok, [{ok, Reply :: #ofp_message{} | noreply}]} |
-                            {error, Reason :: term(), [{ok, Reply :: #ofp_message{} | noreply} | {error, Reason :: term()}]}.
+                            {error, [{ok, Reply :: #ofp_message{} | noreply} | {error, Reason :: term()}]}.
 sync_send_list(ConnectionPid,Msgs) when is_list(Msgs) -> 
-    of_driver_connection:sync_call(ConnectionPid,Msgs).
+    Replies = gen_server:call(ConnectionPid, {sync_send, Msgs}),
+    Status = case lists:all(fun({ok, _}) -> true; (_) -> false end, Replies) of
+        true -> ok;
+        _ -> error
+    end,
+    {Status, Replies}.
 
 %%------------------------------------------------------------------
 
@@ -289,36 +240,36 @@ sync_send_list(ConnectionPid,Msgs) when is_list(Msgs) ->
 -spec close_connection(ConnectionPid :: term()) -> ok.
 close_connection(ConnectionPid) -> %% ONLY CLOSE CONNECTION, might be main, or aux
     try 
-      gen_server:call(ConnectionPid,close_connection) 
+      gen_server:call(ConnectionPid, close_connection) 
     catch 
       exit:{normal,{gen_server,call,[ConnectionPid,close_connection]}} ->
         ok
     end.
-
-%% @hidden
--spec close_ipaddr(IpAddr :: tuple()) -> ok.
-close_ipaddr(IpAddr) ->
-    [ close_connection(Pid) || [_Port,Pid,_Type] <- of_driver_switch_connection:lookup_connection_pid(IpAddr) ],
-    ok.
 
 %% doc
 %% Update the xid in `Msg' to `Xid'.
 %% @end
 -spec set_xid(Msg :: #ofp_message{}, Xid :: integer()) -> {ok,#ofp_message{}}.
 set_xid(#ofp_message{} = Msg, Xid) -> 
-    {ok,Msg#ofp_message{ xid = Xid}}.
+    Msg#ofp_message{xid = Xid}.
 
 %% @doc
-%% Generate a unique Xid for Connection.  The callback Module may use
+%% Generate a unique Xid for Connection.  The code sending messages may use
 %% this function to generate a unique Xid for a `Connection', or the
-%% callback Module may use a method of its own choosing.  Recommendation:
-%% if there is only one pid using the Connection, Module can use its
-%% own code to create unique Xid.  If there are more then one pid
-%% using a single `Connection', Module should use `of_driver:gen_xid/1' (or
+%% callback Module may use a method of its own choosing.  
+%% `of_driver:sync_send/2' and
+%% `of_driver:sync_send_list/2' use this mechanism to generate unique Xids.
+%% Recommendation:
+%% if there is only one pid using the Connection, your can use its
+%% own code to create unique Xid.  If there is more then one pid
+%% using a single `Connection', your code should use `of_driver:gen_xid/1' (or
 %% some other intra-pid coordination) to generate unique Xids for the
-%% `Connection'.
+%% `Connection'.  You should use `of_driver:gen_xid/1' if you are mixing
+%% `of_driver:send/2' and `of_driver:send_list/2' calls with 
+%% `of_driver:sync_send/2' and
+%% `of_driver:sync_send_list/2' calls to avoid duplicate Xids.
 %% @end
 -spec gen_xid(ConnectionPid :: term()) -> {ok,Xid :: integer()}.
 gen_xid(ConnectionPidPid) ->
-    {ok,Xid} = gen_server:call(ConnectionPidPid,next_xid),
+    {ok,Xid} = gen_server:call(ConnectionPidPid, next_xid),
     {ok,Xid}.

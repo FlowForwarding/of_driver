@@ -23,9 +23,9 @@
   {applications, [kernel,
                   stdlib,
                   mnesia,
-		  		  of_protocol,
-		  		  lager
-		 ]},
+                  of_protocol,
+                  lager
+                 ]},
   {env, []},
   {mod, {of_driver_app, []}}
  ]}.

@@ -183,13 +183,7 @@ handle_info(Info, State) ->
     ?WARNING("\n\n !!!!!!!!!! Handling UNHANDLED handle_info [Info : ~p]",[Info]),
     {noreply, State}.
 
-terminate(Reason, #?STATE{ main_connection = MainConn,
-                           callback_state = CallbackState,
-                           callback_mod = Module}) ->
-    % remove self from datapath id map to avoid getting disconnect callbacks
-    ?WARNING("\n\n !!!!!!!!!! HandlerLogic : ~p",[Reason]),
-    %% of_driver:close_connection(MainConn),
-    do_callback(Module, terminate, [CallbackState]),
+terminate(_Reason, _State) ->
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -198,27 +192,6 @@ code_change(_OldVsn, State, _Extra) ->
 %% ------------------------------------------------------------------
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
-
-do_callback(Module, Function, Args) ->
-    erlang:apply(Module, Function, Args).
-
-tell_controller_mode(Connection, active, State = #?STATE{
-                                            generation_id = GenId,
-                                            main_connection = Connection,
-                                            of_version = Version}) ->
-    Msg = ofs_msg_lib:set_role(Version, master, GenId),
-    State1 = State#?STATE{generation_id = next_generation_id(GenId)},
-    case of_driver:sync_send(Connection, Msg) of
-        {error, Reason} ->
-            {error, Reason, State1};
-        {ok, _Reply} ->
-            {ok, State1}
-    end;
-tell_controller_mode(_Connection, standby, _State) ->
-    ok.
-
-next_generation_id(GenId) ->
-    GenId + 1.
 
 get_opt(Key) ->
     get_opt(Key, []).
@@ -232,9 +205,6 @@ get_opt(Key, Options) ->
 
 my_controller_mode(_Peer) ->
     active.
-
-tell_standby(generation_id, State) ->
-    {ok, State}.
 
 sync_send(MsgFn, State) ->
     sync_send(MsgFn, [], State).
