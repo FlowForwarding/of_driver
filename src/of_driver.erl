@@ -128,7 +128,9 @@
 -include_lib("of_driver/include/of_driver.hrl").
 -include_lib("of_driver/include/of_driver_logger.hrl").
 
--export([ send/2,
+-export([ connect/1,
+          connect/2,
+          send/2,
           send_list/2,
           sync_send/2,
           sync_send_list/2,
@@ -138,6 +140,22 @@
         ]).
 
 %%------------------------------------------------------------------
+
+%% @doc
+%% Connect to an OpenFlow switch listening for connections at `IpAddr'
+%% on `Port'.  This is non-standard functionality used for testing.
+%% Calls the callbacks as if the connection were received from the
+%% switch.  Returns the connection which may be used to communicate
+%% with the switch.
+%% @end
+-spec connect(inet:ip_address(), integer()) -> {ok, Connection :: term()} | {error, Reason :: term()}.
+connect(IpAddr, Port) ->
+    of_driver_connection:connect(IpAddr, Port).
+    
+%% @equiv connect(inet:ip_address(), 6653)
+-spec connect(inet:ip_address()) -> {ok, Connection :: term()} | {error, Reason :: term()}.
+connect(IpAddr) ->
+    connect(IpAddr, 6653).
 
 %% @doc
 %% Send `Msg' to a switch via `Connection'.  `Connection' is returned
