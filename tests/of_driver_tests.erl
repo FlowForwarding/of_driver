@@ -37,31 +37,32 @@ of_driver_test_() ->
      fun cleanup/1,
      fun(S) ->
         {foreach, fun test_setup/0,
-         [{"set_xid",             fun set_xid/0},
-          {"main_connect", fun main_connect/0},
-          {"main_terminate", fun main_terminate/0},
-          {"early_message", fun early_message/0},
+         [{"set_xid",          fun set_xid/0},
+          {"main_connect",     fun main_connect/0},
+          {"main_terminate",   fun main_terminate/0},
+          {"early_message",    fun early_message/0},
           {"close_connection", fun close_connection/0}|
-          [{N, fun() -> F(S) end}
-                     || {N, F} <- [
-                                   {"gen_xid",             fun gen_xid/1}
-                                  ,{"aux_connect", fun aux_connect/1}
-                                  ,{"in_message", fun in_message/1}
-                                  ,{"send", fun send/1}
-                                  ,{"sync_send", fun sync_send/1}
-                                  ,{"sync_send_no_reply", fun sync_send_no_reply/1}
-                                  ,{"sync_send_non_reply", fun sync_send_non_reply/1}
-                                  ,{"send_list", fun send_list/1}
-                                  ,{"sync_send_list", fun sync_send_list/1}
-                                  ,{"sync_send_list_no_reply", fun sync_send_list_no_reply/1}
-                                  ,{"multiple_sync_send", fun multiple_sync_send/1}
-                                  ,{"send_unsupported_version", fun send_unsupported_version/1}
-                                  ,{"sync_send_unsupported_version", fun sync_send_unsupported_version/1}
-                                  ,{"send_bad_message", fun send_bad_message/1}
-                                  ,{"sync_send_bad_message", fun sync_send_bad_message/1}
-                                  ,{"send_list_bad_message", fun send_list_bad_message/1}
-                                  ,{"sync_send_list_bad_message", fun sync_send_list_bad_message/1}
-                                  ]]]} end
+          [{N, fun() -> F(S) end} || {N, F} <- 
+                [{"gen_xid",                       fun gen_xid/1}
+                ,{"aux_connect",                   fun aux_connect/1}
+                ,{"in_message",                    fun in_message/1}
+                ,{"send",                          fun send/1}
+                ,{"sync_send",                     fun sync_send/1}
+                ,{"sync_send_no_reply",            fun sync_send_no_reply/1}
+                ,{"sync_send_non_reply",           fun sync_send_non_reply/1}
+                ,{"sync_send_multipart",           fun sync_send_multipart/1}
+                ,{"send_list",                     fun send_list/1}
+                ,{"sync_send_list",                fun sync_send_list/1}
+                ,{"sync_send_list_no_reply",       fun sync_send_list_no_reply/1}
+                ,{"sync_send_list_multipart",      fun sync_send_list_multipart/1}
+                ,{"multiple_sync_send",            fun multiple_sync_send/1}
+                ,{"send_unsupported_version",      fun send_unsupported_version/1}
+                ,{"sync_send_unsupported_version", fun sync_send_unsupported_version/1}
+                ,{"send_bad_message",              fun send_bad_message/1}
+                ,{"sync_send_bad_message",         fun sync_send_bad_message/1}
+                ,{"send_list_bad_message",         fun send_list_bad_message/1}
+                ,{"sync_send_list_bad_message",    fun sync_send_list_bad_message/1}
+                ]]]} end
     }.
 
 setup() ->
@@ -120,7 +121,8 @@ main_connect() ->
                             datapath_id = ExpectedDatapathId}, Features),
             ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_MAC}),
             ?assertEqual(Version, ?VERSION),
-            {ok, callback_state} end),
+            {ok, callback_state} 
+        end),
     meck:expect(of_driver_handler_mock, terminate, fun(_Reason, callback_state) -> ok end),
     Socket = connect(ExpectedDatapathId),
     gen_tcp:close(Socket),
@@ -136,7 +138,8 @@ main_terminate() ->
                             datapath_id = ExpectedDatapathId}, Features),
             ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_MAC}),
             ?assertEqual(Version, ?VERSION),
-            {ok, callback_state} end),
+            {ok, callback_state} 
+        end),
     meck:expect(of_driver_handler_mock, terminate, fun(_Reason, callback_state) -> ok end),
     meck:expect(of_driver_handler_mock, handle_connect,
         fun(_IpAddr, DatapathId, Features, Version, _Connection, AuxId, _Opt) ->
@@ -146,7 +149,8 @@ main_terminate() ->
             ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_MAC}),
             ?assertEqual(Version, ?VERSION),
             ?assertEqual(AuxId, ExpectedAuxId),
-            {ok, aux_callback_state} end),
+            {ok, aux_callback_state} 
+        end),
     meck:expect(of_driver_handler_mock, handle_disconnect, fun(_Reason, aux_callback_state) -> ok end),
     Socket = connect(ExpectedDatapathId),
     _AuxSocket = connect(ExpectedDatapathId, ExpectedAuxId),
@@ -162,7 +166,8 @@ early_message() ->
                             datapath_id = ExpectedDatapathId}, Features),
             ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_MAC}),
             ?assertEqual(Version, ?VERSION),
-            {ok, callback_state} end),
+            {ok, callback_state} 
+        end),
     meck:expect(of_driver_handler_mock, terminate, fun(_Reason, callback_state) -> ok end),
     {ok, Socket} = gen_tcp:connect({127,0,0,1}, ?LISTEN_PORT,
                                             [binary, {active, false}], 5000),
@@ -181,7 +186,8 @@ close_connection() ->
     meck:expect(of_driver_handler_mock, init,
         fun(_IpAddr, _DatapathId, _Features, _Version, Connection, _Opt) ->
             Me ! {connection, Connection},
-            {ok, callback_state} end),
+            {ok, callback_state} 
+        end),
     meck:expect(of_driver_handler_mock, terminate, fun(_Reason, callback_state) -> ok end),
     _Socket = connect(ExpectedDatapathId),
     Conn = receive
@@ -211,7 +217,8 @@ aux_connect({_Socket, _ConnTable}) ->
             ?assertEqual(DatapathId, {?DATAPATH_ID, ?DATAPATH_MAC}),
             ?assertEqual(Version, ?VERSION),
             ?assertEqual(AuxId, ExpectedAuxId),
-            {ok, aux_callback_state} end),
+            {ok, aux_callback_state} 
+        end),
     meck:expect(of_driver_handler_mock, handle_disconnect, fun(_Reason, aux_callback_state) -> ok end),
     AuxSocket = connect_aux(ExpectedAuxId),
     gen_tcp:close(AuxSocket),
@@ -260,7 +267,8 @@ sync_send_non_reply({Socket, ConnTable}) ->
     % (XID doesn't match).
     meck:expect(of_driver_handler_mock, handle_message,
                 fun(#ofp_message{type = features_reply, xid = 9999}, State) ->
-                    {ok, State} end),
+                    {ok, State} 
+                end),
     Connection = get_connection(ConnTable),
     Msg = of_msg_lib:get_features(4),
     Future = future(of_driver, sync_send, [Connection, Msg]),
@@ -272,6 +280,26 @@ sync_send_non_reply({Socket, ConnTable}) ->
     ?assertEqual(noreply, Reply),
     ?assertEqual(1, meck:num_calls(of_driver_handler_mock, handle_message, '_')),
     ?assert(meck:validate(of_driver_handler_mock)).
+
+sync_send_multipart({Socket, ConnTable}) ->
+    Connection = get_connection(ConnTable),
+    Msg = of_msg_lib:get_port_descriptions(4),
+    Future = future(of_driver, sync_send, [Connection, Msg]),
+
+    {#ofp_message{type = multipart_request, xid = RXID}, Rest} = receive_msg(Socket, <<>>),
+    {#ofp_message{type = barrier_request,   xid = BXID}, <<>>} = receive_msg(Socket, Rest),
+
+    send_msg(Socket, multipart_reply(ofp_port_desc_reply,RXID,[more])),
+    send_msg(Socket, multipart_reply(ofp_port_desc_reply,RXID)),
+    send_msg(Socket, barrier_reply(BXID)),
+
+    {ok, Reply} = wait_future(Future),
+    ?assertMatch(#ofp_message{type = multipart_reply,
+                              xid  = RXID,
+                              body = #ofp_port_desc_reply{ body = [#ofp_port{} = _InnerBody1,
+                                                                   #ofp_port{} = _InnerBody2] }
+                            }, Reply),
+    ?assertNot(meck:called(of_driver_handler_mock, handle_message, '_')).
 
 send_list({Socket, ConnTable}) ->
     Connection = get_connection(ConnTable),
@@ -306,7 +334,8 @@ sync_send_list({Socket, ConnTable}) ->
 sync_send_list_no_reply({Socket, ConnTable}) ->
     meck:expect(of_driver_handler_mock, handle_message,
                 fun(#ofp_message{type = features_reply, xid = 9999}, State) ->
-                    {ok, State} end),
+                    {ok, State} 
+                end),
     Connection = get_connection(ConnTable),
     Msg = of_msg_lib:get_features(4),
     Future = future(of_driver, sync_send_list, [Connection, [Msg, Msg, Msg]]),
@@ -323,6 +352,45 @@ sync_send_list_no_reply({Socket, ConnTable}) ->
     ?assertMatch({ok, noreply}, Reply1),
     ?assertMatch({ok, #ofp_message{type = features_reply, xid = RXID2}}, Reply2),
     ?assert(meck:validate(of_driver_handler_mock)).
+
+sync_send_list_multipart({Socket, ConnTable}) ->
+    Connection = get_connection(ConnTable),
+
+    Msg  = of_msg_lib:get_port_descriptions(4),
+    Msg2 = of_msg_lib:get_queue_statistics(4,any,all),
+
+    Future = future(of_driver, sync_send_list, [Connection, [Msg, Msg2]]),
+
+    %% {ofp_message,4,multipart_request,20,{ofp_port_desc_request,[]}}
+    {#ofp_message{type = multipart_request, xid = RXID0}, Rest0} = receive_msg(Socket, <<>>),
+    {#ofp_message{type = multipart_request, xid = RXID1}, Rest1} = receive_msg(Socket, Rest0),
+    {#ofp_message{type = barrier_request, xid = BXID}, <<>>} = receive_msg(Socket, Rest1),
+
+    send_msg(Socket, multipart_reply(ofp_port_desc_reply,RXID0,[more])),
+    send_msg(Socket, multipart_reply(ofp_port_desc_reply,RXID0)),
+
+    send_msg(Socket, multipart_reply(ofp_queue_stats_reply,RXID1,[more])),
+    send_msg(Socket, multipart_reply(ofp_queue_stats_reply,RXID1)),
+
+    send_msg(Socket, barrier_reply(BXID)),
+
+    {ok, [Reply0, Reply1]} = wait_future(Future),
+
+    %% io:format("Reply0 ~p\n",[Reply0]),
+    %% io:format("Reply1 ~p\n",[Reply1]),
+
+    ?assertMatch({ok,#ofp_message{type = multipart_reply,
+                                 xid  = RXID0,
+                                  body = #ofp_port_desc_reply{ body = [#ofp_port{} = _InnerBody1,
+                                                                       #ofp_port{} = _InnerBody2] }
+                                 }}, Reply0),
+    ?assertMatch({ok,#ofp_message{type = multipart_reply,
+                                 xid  = RXID1,
+                                  body = #ofp_queue_stats_reply{ body = [#ofp_queue_stats{} = _InnerBody3,
+                                                                         #ofp_queue_stats{} = _InnerBody4] }
+                                }}, Reply1),
+
+    ?assertNot(meck:called(of_driver_handler_mock, handle_message, '_')).
 
 multiple_sync_send({Socket, ConnTable}) ->
     Connection = get_connection(ConnTable),
@@ -412,46 +480,6 @@ send_msg(Socket, Msg) ->
     {ok, Bin} = of_protocol:encode(Msg),
     ok = gen_tcp:send(Socket, Bin).
 
-barrier_reply(XID) ->
-    #ofp_message{
-        version = ?VERSION,
-        type = barrier_reply,
-        xid = XID,
-        body = #ofp_barrier_reply{}
-    }.
-
-features_reply(XID) ->
-    features_reply(XID, ?DATAPATH_ID, 0).
-
-features_reply(XID, DatapathId, AuxId) ->
-    #ofp_message{
-        version = ?VERSION,
-        type = features_reply,
-        xid = XID,
-        body = #ofp_features_reply{
-            datapath_mac = ?DATAPATH_MAC,
-            datapath_id = DatapathId,
-            n_buffers = 0,
-            n_tables = 255,
-            auxiliary_id = AuxId,
-            capabilities = [flow_stats,table_stats,port_stats,group_stats,queue_stats]
-        }
-    }.
-
-packet_in() ->
-    #ofp_message{
-        version = ?VERSION,
-        type = packet_in,
-        body = #ofp_packet_in{
-            buffer_id = no_buffer,
-            reason = action,
-            table_id = 1,
-            cookie = <<0:64>>,
-            match = #ofp_match{fields = []},
-            data = <<"abcd">>
-        }
-    }.
-
 connect_aux(AuxId) ->
     connect(0, AuxId).
 
@@ -484,3 +512,75 @@ wait_future(Token) ->
 future_call(Parent, Token, M, F, A) ->
     R = apply(M, F, A),
     Parent ! {future, Token, R}.
+
+%%------------------------------------------------------------------------------
+
+barrier_reply(XID) ->
+    #ofp_message{
+        version = ?VERSION,
+        type = barrier_reply,
+        xid = XID,
+        body = #ofp_barrier_reply{}
+    }.
+
+features_reply(XID) ->
+    features_reply(XID, ?DATAPATH_ID, 0).
+
+features_reply(XID, DatapathId, AuxId) ->
+    #ofp_message{
+        version = ?VERSION,
+        type = features_reply,
+        xid = XID,
+        body = #ofp_features_reply{
+            datapath_mac = ?DATAPATH_MAC,
+            datapath_id = DatapathId,
+            n_buffers = 0,
+            n_tables = 255,
+            auxiliary_id = AuxId,
+            capabilities = [flow_stats,table_stats,port_stats,group_stats,queue_stats]
+        }
+    }.
+
+packet_in() ->
+    #ofp_message{
+        version = ?VERSION, 
+        type = packet_in,
+        body = #ofp_packet_in{
+            buffer_id = no_buffer,
+            reason = action,
+            table_id = 1,
+            cookie = <<0:64>>,
+            match = #ofp_match{fields = []},
+            data = <<"abcd">>
+        }
+    }.
+
+multipart_reply(Type,Xid) ->
+    multipart_reply(Type,Xid,[]).
+    
+multipart_reply(ofp_port_desc_reply,Xid,Flags) ->
+    #ofp_message{
+        version = ?VERSION,
+        type = multipart_reply,
+        xid = Xid,
+        body = #ofp_port_desc_reply{ flags = Flags,
+                                     body = [{ofp_port,714,
+                                                 <<14,7,73,8,219,149>>,
+                                                 <<"Port714">>,[],
+                                                 [live],
+                                                 ['100mb_fd',copper,autoneg],
+                                                 [copper,autoneg],
+                                                 ['100mb_fd',copper,autoneg],
+                                                 ['100mb_fd',copper,autoneg],
+                                                 5000,5000}]
+                                    }
+    };
+multipart_reply(ofp_queue_stats_reply,Xid,Flags) ->
+    #ofp_message{
+        version = ?VERSION,
+        type = multipart_reply,
+        xid = Xid,
+        body = #ofp_queue_stats_reply{flags = [more],
+                                      body  = [{ofp_queue_stats,1,664,0,0,0,13980,651246000}]
+                }
+    }.

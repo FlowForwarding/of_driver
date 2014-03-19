@@ -390,9 +390,14 @@ update_response(XID, Msg, State = #?STATE{pending_msgs = PSM}) ->
     case gb_trees:lookup(XID, PSM) of
         {value, ?NOREPLY} ->
             State#?STATE{pending_msgs = gb_trees:enter(XID, Msg, PSM)};
-        {value, _} ->
-            % XXX more than one response - report an error
-            State;
+        {value, Val} -> % XXX more than one non matching response - report an error
+            case of_driver_message:append_body(Val, Msg) of
+                false ->
+                    ?WARNING("duplicate response message: ~p\n",[Msg]),
+                    State;
+                NewMsg ->
+                    State#?STATE{pending_msgs = gb_trees:enter(XID, NewMsg, PSM)}
+            end;
         none ->
             % these aren't the droids you're looking for...
             switch_handler_next_state(Msg, State)
