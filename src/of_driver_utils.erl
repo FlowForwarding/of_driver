@@ -33,12 +33,7 @@
         ]).
 -export([conf_default/2,
          conf_default/3,
-         proplist_default/3,
-         create_hello/1,
-         create_features_request/1,
-         get_datapath_info/2,
-         get_aux_id/2,
-         get_capabilities/2
+         proplist_default/3
         ]).
 
 -spec connection_info(ConnectionPid :: pid()) -> {ok,record()} | undefined.
@@ -50,13 +45,6 @@ connection_info(ConnectionPid) ->
         exit:{noproc,{gen_server,call,[ConnectionPid,state]}} ->
             undefined
     end.
-
-mod(3) ->
-    {ok, of_driver_v3};
-mod(4) ->
-    {ok, of_driver_v4};
-mod(_) ->
-    {error, bad_version}.
 
 conf_default(Entry, Default) ->
     conf_default(Entry, fun any/1, Default).
@@ -81,38 +69,6 @@ proplist_default(Prop,List,Default) ->
     end.
 
 any(_) -> true.
-
-create_hello(Versions) when is_integer(Versions) ->
-    create_hello([Versions]);
-create_hello(Versions) when is_list(Versions) ->
-    Version = lists:max(Versions),
-    Body = if
-               Version >= 4 ->
-                   #ofp_hello{elements = [{versionbitmap, Versions}]};
-               true ->
-                   #ofp_hello{}
-           end,
-    #ofp_message{version = Version, type = hello, xid = 0, body = Body}.
-
-create_features_request(Version) ->
-    apply_version(Version,features_request,[]).
-
-get_datapath_info(Version, OfpFeaturesReply) ->
-    apply_version(Version, get_datapath_info, [OfpFeaturesReply]).
-
-get_aux_id(Version, OfpFeaturesReply) -> %% NOTE: v3 has no auxiliary_id
-    apply_version(Version, get_aux_id, [OfpFeaturesReply]).
-
-get_capabilities(Version,OfpFeaturesReply) ->
-    apply_version(Version,get_capabilities,[OfpFeaturesReply]).
-
-apply_version(Version, Function, Args) ->
-    case mod(Version) of
-	{ok, M} -> apply(M, Function, Args);
-	Error  -> Error
-    end.
-
-%%-----------------------------------------------------------------------------
 
 connect(tcp, Host, Port) ->
     gen_tcp:connect(Host, Port, opts(tcp), 5000);
