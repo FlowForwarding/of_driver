@@ -482,6 +482,8 @@ create_features_request(3) ->
 create_features_request(Version) ->
     of_msg_lib:get_features(Version).
 
+decide_on_version([],_) ->
+	{failed, {no_common_version, [], []}};
 decide_on_version(SupportedVersions, #ofp_message{version = CtrlHighestVersion,
                                                   body    = HelloBody}) ->
     SupportedHighestVersion = lists:max(SupportedVersions),
