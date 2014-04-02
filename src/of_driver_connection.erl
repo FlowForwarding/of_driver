@@ -146,7 +146,7 @@ handle_call(state, _From, State) ->
 
 handle_cast({send, hello}, State) ->
     Versions = of_driver_utils:conf_default(of_compatible_versions, fun erlang:is_list/1, [3, 4]),
-    Msg = of_driver_utils:create_hello(Versions),
+    Msg = of_msg_lib:hello(lists:max(Versions),Versions),
     do_send(Msg, State),
     {noreply, State};
 handle_cast(idle_check, State) ->
@@ -276,9 +276,9 @@ do_handle_tcp(#?STATE{parser        = undefined,
                 {failed, Reason} ->
                     handle_failed_negotiation(XID, Reason, State);
                 Version ->
-                    {ok, Parser} = ofp_parser:new(Version),
-                    {ok, FeaturesBin} = of_protocol:encode(create_features_request(Version)),
+                	{ok, FeaturesBin} = of_protocol:encode(create_features_request(Version)),
                     ok = of_driver_utils:send(Protocol, Socket, FeaturesBin),
+                    {ok, Parser} = ofp_parser:new(Version),
                     do_handle_tcp(State#?STATE{parser = Parser,
                                                version = Version}, Leftovers)
             end;
@@ -320,46 +320,49 @@ handle_messages([Message|Rest], NewState) ->
 
 handle_message(#ofp_message{version = Version,
                             type    = features_reply,
-                            body    = Features} = _Msg,
+                            body    = Features } = Msg,
                             #?STATE{connection_init     = false,
                                     switch_handler      = SwitchHandler,
                                     switch_handler_opts = Opts,
                                     address             = IpAddr} = State) ->
     % process feature reply from our initial handshake
-    {ok, DatapathInfo} = of_driver_utils:get_datapath_info(Version, Features),
-    NewState1 = State#?STATE{datapath_info = DatapathInfo},
-    NewState2 = case Version of
+    NewState1 = case Version of
         3 ->
-            NewState1#?STATE{aux_id = 0};
+        	% V3 has no auxiliary_id filed in the ofp_features_reply record.
+        	% of_msg_lib has no V3 support at the date of writting this.
+        	DatapathInfo = of_driver_v3:get_datapath_info(Features),
+            State#?STATE{aux_id = 0, datapath_info = DatapathInfo};
         _ ->
-            {ok, AuxID} = of_driver_utils:get_aux_id(Version, Features),
-            NewState1#?STATE{aux_id = AuxID}
-    end,
-    case handle_datapath(NewState2) of 
+        	{_MsgName, _MsgXid, MsgRes} = of_msg_lib:decode(Msg),
+        	DatapathInfo = {proplists:get_value(datapath_id,  MsgRes),
+        					proplists:get_value(datapath_mac, MsgRes)},
+        	AuxID = proplists:get_value(auxiliary_id, MsgRes),
+            State#?STATE{aux_id = AuxID, datapath_info = DatapathInfo}
+    end,    
+    case handle_datapath(NewState1) of 
         Error1 = {stop, _, _} ->
             Error1;
-        NewState3 ->
-            InitAuxID = NewState3#?STATE.aux_id,
-            R = case InitAuxID of
+        NewState2 ->
+            R = case NewState2#?STATE.aux_id of
                 0 ->
                     do_callback(SwitchHandler, init,
-                                        [IpAddr, DatapathInfo,
+                                        [IpAddr, NewState1#?STATE.datapath_info,
                                          Features, Version, self(), Opts],
-                                        NewState3);
+                                        NewState2);
                 _ ->
-                    MainPid = of_driver_db:lookup_connection(DatapathInfo, 0),
+                    MainPid = of_driver_db:lookup_connection(NewState1#?STATE.datapath_info, 0),
                     MonitorRef = erlang:monitor(process, MainPid),
-                    NewState4 = NewState3#?STATE{main_monitor = MonitorRef},
+                    NewState3 = NewState2#?STATE{main_monitor = MonitorRef},
                     do_callback(SwitchHandler, handle_connect,
-                                        [IpAddr, DatapathInfo, Features,
-                                         Version, self(), InitAuxID, Opts],
-                                        NewState4)
+                                        [IpAddr, NewState1#?STATE.datapath_info, Features,
+                                         Version, self(), NewState2#?STATE.aux_id, Opts],
+                                        NewState3)
             end,
             case R of
                 Error2 = {stop, _, _} ->
                     Error2;
-                NewState5 ->
-                    NewState5#?STATE{connection_init = true}
+                NewState4 ->
+                    NewState4#?STATE{connection_init = true}
             end
     end;
 handle_message(#ofp_message{} = Msg, #?STATE{connection_init = false} = State) ->
@@ -459,7 +462,7 @@ connection_close_callback(Module, HandlerState, _AuxID) ->
 %%-----------------------------------------------------------------------------
 
 create_features_request(3) ->
-    of_driver_utils:create_features_request(3);
+    of_driver_v3:features_request();
 create_features_request(Version) ->
     of_msg_lib:get_features(Version).
 
