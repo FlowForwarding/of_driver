@@ -172,7 +172,7 @@ early_message() ->
     {ok, Socket} = gen_tcp:connect({127,0,0,1}, ?LISTEN_PORT,
                                             [binary, {active, false}], 5000),
     send_msg(Socket, packet_in()),
-    send_msg(Socket, of_driver_utils:create_hello([?VERSION])),
+    send_msg(Socket, create_hello(?VERSION)),
     {#ofp_message{type = hello}, Rest} = receive_msg(Socket, <<>>),
     {#ofp_message{type = features_request, xid = FXID}, <<>>} = receive_msg(Socket, Rest),
     send_msg(Socket, packet_in()),
@@ -232,7 +232,7 @@ in_message({Socket, _ConnTable}) ->
     ?assert(meck:validate(of_driver_handler_mock)).
 
 send({Socket, ConnTable}) ->
-    Hello = of_driver_utils:create_hello(4),
+    Hello = create_hello(4),
     Connection = get_connection(ConnTable),
     ok = of_driver:send(Connection, Hello),
     {Recv, <<>>} = receive_msg(Socket, <<>>),
@@ -303,7 +303,7 @@ sync_send_multipart({Socket, ConnTable}) ->
 
 send_list({Socket, ConnTable}) ->
     Connection = get_connection(ConnTable),
-    Hello = of_driver_utils:create_hello(4),
+    Hello = create_hello(4),
     Features = of_msg_lib:get_features(4),
     ok = of_driver:send_list(Connection, [Hello, Features, Hello]),
     {Recv0, Rest0} = receive_msg(Socket, <<>>),
@@ -492,7 +492,7 @@ connect(DatapathId) ->
 connect(DatapathId, AuxId) ->
     {ok, Socket} = gen_tcp:connect({127,0,0,1}, ?LISTEN_PORT,
                                             [binary, {active, false}], 5000),
-    send_msg(Socket, of_driver_utils:create_hello([?VERSION])),
+    send_msg(Socket, create_hello(?VERSION)),
     {#ofp_message{type = hello}, Rest} = receive_msg(Socket, <<>>),
     {#ofp_message{type = features_request, xid = XID}, <<>>} = receive_msg(Socket, Rest),
     send_msg(Socket, features_reply(XID, DatapathId, AuxId)),
@@ -514,6 +514,11 @@ future_call(Parent, Token, M, F, A) ->
     Parent ! {future, Token, R}.
 
 %%------------------------------------------------------------------------------
+
+create_hello(Version) ->
+        #ofp_message{version = Version, xid = 0,
+                type = hello,
+                body = #ofp_hello{elements = [{versionbitmap, [Version]}]}}.
 
 barrier_reply(XID) ->
     #ofp_message{
@@ -575,7 +580,7 @@ multipart_reply(ofp_port_desc_reply,Xid,Flags) ->
                                                  5000,5000}]
                                     }
     };
-multipart_reply(ofp_queue_stats_reply,Xid,Flags) ->
+multipart_reply(ofp_queue_stats_reply,Xid,_Flags) ->
     #ofp_message{
         version = ?VERSION,
         type = multipart_reply,
