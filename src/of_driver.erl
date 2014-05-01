@@ -22,6 +22,10 @@
 %%% controller and an OpenFlow switch.
 %%% 
 %%% === Application Environment Variables ===
+%%% `listen' - if `true', automatically start listening for incoming
+%%% switch connections.  If `false`, code using of_driver must
+%%% explicitly start the listener with `listen/0'.
+%%%
 %%% `listen_ip' - IP address
 %%% to listen on for connections; default is any IP address.
 %%% 
@@ -128,18 +132,32 @@
 -include_lib("of_driver/include/of_driver.hrl").
 -include_lib("of_driver/include/of_driver_logger.hrl").
 
--export([ connect/1,
-          connect/2,
-          send/2,
-          send_list/2,
-          sync_send/2,
-          sync_send_list/2,
-          close_connection/1,
-          set_xid/2,
-          gen_xid/1
+-export([listen/0,
+         connect/1,
+         connect/2,
+         send/2,
+         send_list/2,
+         sync_send/2,
+         sync_send_list/2,
+         close_connection/1,
+         set_xid/2,
+         gen_xid/1
         ]).
 
 %%------------------------------------------------------------------
+
+%% @doc
+%% Explicitly start the listener for switch connections.  If
+%% the environment variable `listen' is true, of_driver automatically
+%% starts the listener.  If the `listen' environment variable is
+%% false, your code must explicitly start the listener with this
+%% function.  This allows you to have more control over whether
+%% or not your node listens for connections.
+%% @end
+-spec listen() -> ok.
+listen() ->
+    of_driver_listener:listen(),
+    ok.
 
 %% @doc
 %% Connect to an OpenFlow switch listening for connections at `IpAddr'
