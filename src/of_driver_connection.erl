@@ -232,10 +232,11 @@ receive_ping(#?STATE{ping_timeout_timer = TRef} = State) ->
     State#?STATE{ping_timeout_timer = undefined, ping_xid = undefined}.
 
 do_send(Msg, #?STATE{protocol = Protocol,
-                     socket   = Socket} = _State) ->
+                     socket = Socket,
+                     address = IpAddr} = _State) ->
     case of_protocol:encode(Msg) of
         {ok, EncodedMessage} ->
-            ?DEBUG("Send: ~p~n", [Msg]),
+            ?DEBUG("Send to ~p: ~p~n", [IpAddr, Msg]),
             of_driver_utils:send(Protocol, Socket, EncodedMessage);
         {error, Error} ->
             {error, Error}
@@ -326,7 +327,7 @@ do_handle_tcp(#?STATE{ parser = Parser} = State, Data) ->
 handle_messages([], NewState) ->
     {ok, NewState};
 handle_messages([Message|Rest], NewState) ->
-    ?DEBUG("Receive: ~p~n", [Message]),
+    ?DEBUG("Receive from ~p: ~p~n", [NewState#?STATE.address, Message]),
     case handle_message(Message, NewState) of
         {stop, Reason, State} ->
             {stop, Reason, State};

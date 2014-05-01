@@ -42,6 +42,8 @@
     lsock :: inets:socket()
 }).
 
+-include_lib("of_driver/include/of_driver_logger.hrl").
+
 start_link() ->
     {ok, Pid} = gen_server:start_link({local, ?SERVER}, ?MODULE, [], []),
     {ok, Pid}.
@@ -69,6 +71,7 @@ handle_cast(startup, State) ->
                                                  {active, false},
                                                  {reuseaddr, true}]),
     ListenOpts2 = lists:append(ListenOpts,[{ip,{0,0,0,0}}]),
+    ?DEBUG("of_driver listening for switches on ~p~n", [Port]),
     {ok, LSocket} = gen_tcp:listen(Port,ListenOpts2),
     spawn_link(?MODULE, accept, [LSocket]),
     {noreply, State#?STATE{lsock = LSocket}};
