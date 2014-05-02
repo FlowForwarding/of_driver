@@ -275,12 +275,7 @@ sync_send_list(ConnectionPid,Msgs) when is_list(Msgs) ->
 %% @end
 -spec close_connection(ConnectionPid :: term()) -> ok.
 close_connection(ConnectionPid) -> %% ONLY CLOSE CONNECTION, might be main, or aux
-    try 
-      gen_server:call(ConnectionPid, close_connection) 
-    catch 
-      exit:{normal,{gen_server,call,[ConnectionPid,close_connection]}} ->
-        ok
-    end.
+    gen_server:cast(ConnectionPid, close_connection).
 
 %% doc
 %% Update the xid in `Msg' to `Xid'.

@@ -133,8 +133,6 @@ init([Socket]) ->
 
 %%------------------------------------------------------------------
 
-handle_call(close_connection, _From, State) ->
-    close_of_connection(State, called_close_connection);
 handle_call({sync_send, OfpMsgs}, From, State =
                                             #?STATE{xid = XID,
                                                     version = Version,
@@ -169,7 +167,9 @@ handle_cast(idle_check, State) ->
     NewState = maybe_ping(State),
     {noreply, NewState};
 handle_cast(ping_timeout, State) ->
-    close_of_connection(State, ping_timeout).
+    close_of_connection(State, ping_timeout);
+handle_cast(close_connection, State) ->
+    close_of_connection(State, called_close_connection).
 
 %%------------------------------------------------------------------
 
@@ -188,12 +188,12 @@ handle_info({tcp_error, _Socket, _Reason},State) ->
 
 terminate(Reason, #?STATE{socket = undefined}) ->
     % terminating after connection is closed
-    ?INFO("[~p] terminating: ~p~n",[?MODULE, Reason]),
+    ?INFO("[~p] terminating: ~p~n", [?MODULE, Reason]),
     ok;
 terminate(Reason, State) ->
     % terminate and close connection
-    ?INFO("[~p] terminating (crash): ~p~n",[?MODULE, Reason]),
-    close_of_connection(State,gen_server_terminate),
+    ?INFO("[~p] terminating (crash): ~p~n", [?MODULE, Reason]),
+    close_of_connection(State, gen_server_terminate),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -367,12 +367,14 @@ handle_message(#ofp_message{version = Version,
                                          Features, Version, self(), Opts],
                                         NewState2);
                 _ ->
-                    MainPid = of_driver_db:lookup_connection(NewState1#?STATE.datapath_info, 0),
+                    MainPid = of_driver_db:lookup_connection(
+                                            NewState1#?STATE.datapath_info, 0),
                     MonitorRef = erlang:monitor(process, MainPid),
                     NewState3 = NewState2#?STATE{main_monitor = MonitorRef},
                     do_callback(SwitchHandler, handle_connect,
-                                        [IpAddr, NewState1#?STATE.datapath_info, Features,
-                                         Version, self(), NewState2#?STATE.aux_id, Opts],
+                                        [IpAddr, NewState1#?STATE.datapath_info,
+                                         Features, Version, self(),
+                                         NewState2#?STATE.aux_id, Opts],
                                         NewState3)
             end,
             case R of
@@ -459,22 +461,22 @@ switch_handler_next_state(Msg, #?STATE{ switch_handler = SwitchHandler,
 
 %%-----------------------------------------------------------------------------
 
-close_of_connection(#?STATE{ socket        = Socket,
-                             datapath_info = DatapathInfo,
-                             aux_id        = AuxID,
-                             switch_handler= SwitchHandler,
-                             handler_state = HandlerState } = State, Reason) ->
+close_of_connection(#?STATE{socket        = Socket,
+                            datapath_info = DatapathInfo,
+                            aux_id        = AuxID,
+                            switch_handler= SwitchHandler,
+                            handler_state = HandlerState} = State, Reason) ->
     ?WARNING("connection terminated: datapathid(~p) aux_id(~p) reason(~p)~n",
-                            [DatapathInfo, AuxID, Reason]),
+                                                [DatapathInfo, AuxID, Reason]),
     of_driver_db:delete_connection(DatapathInfo, AuxID),   
-    connection_close_callback(SwitchHandler,HandlerState,AuxID),
     ok = terminate_connection(Socket),
+    connection_close_callback(SwitchHandler, HandlerState, AuxID),
     {stop, normal, State#?STATE{socket = undefined}}.
 
 connection_close_callback(Module, HandlerState, 0) ->
     Module:terminate(driver_closed_connection, HandlerState);
 connection_close_callback(Module, HandlerState, _AuxID) ->
-    Module:handle_disconnect(driver_closed_connection,HandlerState).
+    Module:handle_disconnect(driver_closed_connection, HandlerState).
 
 %%-----------------------------------------------------------------------------
 
