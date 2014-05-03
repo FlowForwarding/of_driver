@@ -22,8 +22,7 @@
 
 -behaviour(gen_server).
 
--export([connect/2,
-         idle_check/1,
+-export([idle_check/1,
          ping_timeout/1]).
 
 -export([start_link/1,
@@ -73,21 +72,6 @@
                }).
 
 %%------------------------------------------------------------------
-
-connect(IpAddr, Port) ->
-    case gen_tcp:connect(IpAddr, Port,
-                            [binary, {packet, raw}, {active, false}]) of
-        {ok, Socket} ->
-            case of_driver_connection_sup:start_child(Socket) of
-                {ok, Connection} ->
-                    gen_tcp:controlling_process(Socket, Connection),
-                    {ok, Connection};
-                E2 ->
-                    E2
-            end;
-        E1 ->
-            E1
-    end.
 
 idle_check(ServerPid) ->
     gen_server:cast(ServerPid, idle_check).

@@ -168,7 +168,7 @@ listen() ->
 %% @end
 -spec connect(inet:ip_address(), integer()) -> {ok, Connection :: term()} | {error, Reason :: term()}.
 connect(IpAddr, Port) ->
-    of_driver_connection:connect(IpAddr, Port).
+    of_driver_conman_sup:start_child(IpAddr, Port).
     
 %% @equiv connect(inet:ip_address(), 6653)
 -spec connect(inet:ip_address()) -> {ok, Connection :: term()} | {error, Reason :: term()}.

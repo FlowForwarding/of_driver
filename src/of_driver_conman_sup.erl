@@ -17,40 +17,27 @@
 %% @author Erlang Solutions Ltd. <openflow@erlang-solutions.com>
 %% @copyright 2014 FlowForwarding.org
 
--module(of_driver_sup).
--copyright("2013, Erlang Solutions Ltd.").
+-module(of_driver_conman_sup).
+-copyright("2014, Erlang Solutions Ltd.").
 
 -behaviour(supervisor).
 
--export([start_link/0]).
--export([init/1]).
+-export([start_link/0, init/1]).
+-export([start_child/2]).
 
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-init([]) ->    
-    RestartStrategy = one_for_one,
-    
+init([]) ->
+    C = of_driver_conman,
+    RestartStrategy = simple_one_for_one,
     MaxRestarts = 1000,
     MaxSecondsBetweenRestarts = 3600,
-
     SupFlags = {RestartStrategy, MaxRestarts, MaxSecondsBetweenRestarts},
-    
-    Restart = permanent,
-    Shutdown = 2000,
-    Type = worker,
-    
-    C = of_driver_connection_sup,
-    CSup = {C, {C, start_link, []}, Restart, Shutdown, Type, [C]},
-
-    CM = of_driver_conman_sup,
-    CMSup = {CM, {CM, start_link, []}, Restart, Shutdown, Type, [CM]},
-    
-    L = of_driver_listener,
-    LChild = {L, {L, start_link, []}, Restart, Shutdown, Type, [L]},
-    
-    {ok, {SupFlags, [ CSup,
-                      CMSup,
-                      LChild
-		    ]}
+    {ok, {SupFlags,
+          [{conman_id,{C, start_link, []},temporary, 1000, worker, [C]} 
+          ]}
     }.
+
+start_child(IpAddr, Port) ->
+    supervisor:start_child(?MODULE, [IpAddr, Port]).
