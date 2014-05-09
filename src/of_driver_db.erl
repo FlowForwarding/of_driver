@@ -59,14 +59,14 @@ table_opt(_) ->
 
 %%--- Datapath ID/Mac -----------------------------------------------------
 
--spec insert_connection(DatapathInfo::{DatapathId::integer(), DatapathMac::term()}, AuxId::integer(), ConnPID::pid()) -> boolean().
-insert_connection(DatapathInfo, AuxId, ConnectionPid) ->
-    of_driver_datapath:insert_connection(DatapathInfo, AuxId, ConnectionPid).
+-spec insert_connection(DatapathMac::term(), AuxId::term(), ConnPID::pid()) -> boolean().
+insert_connection(DatapathMac, AuxId, ConnectionPid) ->
+    of_driver_datapath:insert_connection(DatapathMac, AuxId, ConnectionPid).
 
--spec delete_connection(DatapathInfo::{DatapathId::integer(), DatapathMac::term()}, AuxId::integer()) -> true.
-delete_connection(DatapathInfo, AuxId) ->
-    of_driver_datapath:delete_connection(DatapathInfo, AuxId).
+-spec delete_connection(DatapathMac::term(), AuxId :: term()) -> true.
+delete_connection(DatapathMac, AuxId) ->
+    of_driver_datapath:delete_connection(DatapathMac, AuxId).
 
--spec lookup_connection(DatapathInfo::{DatapathId::integer(), DatapathMac::term()}, AuxId::integer()) -> not_found|pid().
-lookup_connection(DatapathInfo, AuxId) ->
-    of_driver_datapath:lookup_connection(DatapathInfo, AuxId).
+-spec lookup_connection(DatapathMac::term(), AuxId :: term()) -> not_found|pid().
+lookup_connection(DatapathMac, AuxId) ->
+    of_driver_datapath:lookup_connection(DatapathMac, AuxId).

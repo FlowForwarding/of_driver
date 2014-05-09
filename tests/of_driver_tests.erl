@@ -120,7 +120,7 @@ main_connect() ->
             ?assertMatch(#ofp_features_reply{ 
                             datapath_mac = ?DATAPATH_UNPARSED,
                             datapath_id = ExpectedDatapathId}, Features),
-            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_HEX}),
+            ?assertEqual(DatapathId,?DATAPATH_HEX),
             ?assertEqual(Version, ?VERSION),
             {ok, callback_state} 
         end),
@@ -137,7 +137,7 @@ main_terminate() ->
             ?assertMatch(#ofp_features_reply{ 
                             datapath_mac = ?DATAPATH_UNPARSED,
                             datapath_id = ExpectedDatapathId}, Features),
-            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_HEX}),
+            ?assertEqual(DatapathId,?DATAPATH_HEX),
             ?assertEqual(Version, ?VERSION),
             {ok, callback_state} 
         end),
@@ -147,7 +147,7 @@ main_terminate() ->
             ?assertMatch(#ofp_features_reply{ 
                             datapath_mac = ?DATAPATH_UNPARSED,
                             datapath_id = ExpectedDatapathId}, Features),
-            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_HEX}),
+            ?assertEqual(DatapathId,?DATAPATH_HEX),
             ?assertEqual(Version, ?VERSION),
             ?assertEqual(AuxId, ExpectedAuxId),
             {ok, aux_callback_state} 
@@ -165,7 +165,7 @@ early_message() ->
             ?assertMatch(#ofp_features_reply{ 
                             datapath_mac = ?DATAPATH_UNPARSED,
                             datapath_id = ExpectedDatapathId}, Features),
-            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_HEX}),
+            ?assertEqual(DatapathId,?DATAPATH_HEX),
             ?assertEqual(Version, ?VERSION),
             {ok, callback_state} 
         end),
@@ -218,7 +218,7 @@ aux_connect({_Socket, _ConnTable}) ->
             ?assertMatch(#ofp_features_reply{ 
                             datapath_mac = ?DATAPATH_UNPARSED,
                             datapath_id = ?DATAPATH_ID }, Features),
-            ?assertEqual(DatapathId, {?DATAPATH_ID, ?DATAPATH_HEX}),
+            ?assertEqual(DatapathId,?DATAPATH_HEX),
             ?assertEqual(Version, ?VERSION),
             ?assertEqual(AuxId, ExpectedAuxId),
             {ok, aux_callback_state} 

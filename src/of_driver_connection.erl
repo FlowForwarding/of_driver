@@ -61,7 +61,7 @@
                  hello_buffer = <<>>     :: binary(),
                  protocol                :: tcp | ssl,
                  aux_id = 0              :: integer(),
-                 datapath_info           :: { DatapathId :: integer(), DatapathMac :: term() },
+                 datapath_mac            :: term(),
                  connection_init = false :: boolean(),
                  handler_state           :: term(),
                  pending_msgs            :: term(),
@@ -331,16 +331,15 @@ handle_message(#ofp_message{version = Version,
         3 ->
         	% V3 has no auxiliary_id filed in the ofp_features_reply record.
         	% of_msg_lib has no V3 support at the date of writting this.
-        	DatapathInfo = of_driver_v3:get_datapath_info(Features),
-            State#?STATE{aux_id = 0, datapath_info = DatapathInfo};
+        	DatapathMac = of_driver_v3:get_datapath_info(Features),
+            State#?STATE{aux_id = 0, datapath_mac = DatapathMac};
         _ ->
         	{_MsgName, _MsgXid, MsgRes} = of_msg_lib:decode(Msg),
           DPID=proplists:get_value(datapath_id,  MsgRes),
           PDMAC=proplists:get_value(datapath_mac, MsgRes),
-          DPHEX=of_driver_utils:datapath_mac(DPID,PDMAC),
-        	DatapathInfo = {DPID,DPHEX},
+          DatapathMac=of_driver_utils:datapath_mac(DPID,PDMAC),
         	AuxID = proplists:get_value(auxiliary_id, MsgRes),
-            State#?STATE{aux_id = AuxID, datapath_info = DatapathInfo}
+            State#?STATE{aux_id = AuxID, datapath_mac = DatapathMac}
     end,    
     case handle_datapath(NewState1) of 
         Error1 = {stop, _, _} ->
@@ -349,16 +348,16 @@ handle_message(#ofp_message{version = Version,
             R = case NewState2#?STATE.aux_id of
                 0 ->
                     do_callback(SwitchHandler, init,
-                                        [IpAddr, NewState1#?STATE.datapath_info,
+                                        [IpAddr, NewState1#?STATE.datapath_mac,
                                          Features, Version, self(), Opts],
                                         NewState2);
                 _ ->
                     MainPid = of_driver_db:lookup_connection(
-                                            NewState1#?STATE.datapath_info, 0),
+                                            NewState1#?STATE.datapath_mac, 0),
                     MonitorRef = erlang:monitor(process, MainPid),
                     NewState3 = NewState2#?STATE{main_monitor = MonitorRef},
                     do_callback(SwitchHandler, handle_connect,
-                                        [IpAddr, NewState3#?STATE.datapath_info,
+                                        [IpAddr, NewState3#?STATE.datapath_mac,
                                          Features, Version, self(),
                                          NewState2#?STATE.aux_id, Opts],
                                         NewState3)
@@ -429,9 +428,9 @@ delete_pending_results(XIDStatus, PSM) ->
                 gb_trees:delete(XID, T)
             end, PSM, XIDStatus).
 
-handle_datapath(#?STATE{ datapath_info = DatapathInfo,
-                         aux_id        = AuxID} = State) ->
-    case of_driver_db:insert_connection(DatapathInfo, AuxID, self()) of
+handle_datapath(#?STATE{ datapath_mac = DatapathMac,
+                         aux_id       = AuxID} = State) ->
+    case of_driver_db:insert_connection(DatapathMac, AuxID, self()) of
         true ->
             State;
         false ->
@@ -440,21 +439,20 @@ handle_datapath(#?STATE{ datapath_info = DatapathInfo,
     end.
 
 switch_handler_next_state(Msg, #?STATE{ switch_handler = SwitchHandler,
-                                       handler_state = HandlerState
-                                       } = State) ->
+                                        handler_state  = HandlerState } = State) ->
     {ok, NewHandlerState} = SwitchHandler:handle_message(Msg, HandlerState),
     State#?STATE{handler_state = NewHandlerState}.
 
 %%-----------------------------------------------------------------------------
 
 close_of_connection(#?STATE{socket        = Socket,
-                            datapath_info = DatapathInfo,
+                            datapath_mac  = DatapathMac,
                             aux_id        = AuxID,
                             switch_handler= SwitchHandler,
                             handler_state = HandlerState} = State, Reason) ->
-    ?WARNING("connection terminated: datapathid(~p) aux_id(~p) reason(~p)~n",
-                                                [DatapathInfo, AuxID, Reason]),
-    of_driver_db:delete_connection(DatapathInfo, AuxID),   
+    ?WARNING("connection terminated: datapath_mac(~p) aux_id(~p) reason(~p)~n",
+                                                [DatapathMac, AuxID, Reason]),
+    of_driver_db:delete_connection(DatapathMac, AuxID),   
     ok = terminate_connection(Socket),
     connection_close_callback(SwitchHandler, HandlerState, AuxID),
     {stop, normal, State#?STATE{socket = undefined}}.

@@ -34,4 +34,4 @@ features_request() ->
 get_datapath_info(Rec) ->
     #ofp_features_reply{datapath_id = DatapathID, datapath_mac = DatapathMac} = Rec,
     HexDPMAC = of_driver_utils:datapath_mac(DatapathID,DatapathMac),
-    {ok,{DatapathID,HexDPMAC}}.
+    {ok,HexDPMAC}.
