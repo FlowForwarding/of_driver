@@ -24,8 +24,9 @@
 -include_lib("of_protocol/include/ofp_v4.hrl").
 
 -define(LISTEN_PORT, 15578).
--define(DATAPATH_ID, 0).
--define(DATAPATH_MAC, <<8,0,39,150,212,121>>).
+-define(DATAPATH_ID, 1).
+-define(DATAPATH_UNPARSED,<<8,0,39,150,212,121>>).
+-define(DATAPATH_HEX,"08:00:27:96:D4:79:00:01").
 
 -export([trace/0]).
 
@@ -113,13 +114,13 @@ set_xid() ->
     ?assertEqual(NewXid, NewMsg#ofp_message.xid).
 
 main_connect() ->
-    ExpectedDatapathId = 1,
+    ExpectedDatapathId = ?DATAPATH_ID,
     meck:expect(of_driver_handler_mock, init,
         fun(_IpAddr, DatapathId, Features, Version, _Connection, _Opt) ->
             ?assertMatch(#ofp_features_reply{ 
-                            datapath_mac = ?DATAPATH_MAC,
+                            datapath_mac = ?DATAPATH_UNPARSED,
                             datapath_id = ExpectedDatapathId}, Features),
-            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_MAC}),
+            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_HEX}),
             ?assertEqual(Version, ?VERSION),
             {ok, callback_state} 
         end),
@@ -129,14 +130,14 @@ main_connect() ->
     ?assert(meck:validate(of_driver_handler_mock)).
 
 main_terminate() ->
-    ExpectedDatapathId = 1,
+    ExpectedDatapathId = ?DATAPATH_ID,
     ExpectedAuxId = 1,
     meck:expect(of_driver_handler_mock, init,
         fun(_IpAddr, DatapathId, Features, Version, _Connection, _Opt) ->
             ?assertMatch(#ofp_features_reply{ 
-                            datapath_mac = ?DATAPATH_MAC,
+                            datapath_mac = ?DATAPATH_UNPARSED,
                             datapath_id = ExpectedDatapathId}, Features),
-            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_MAC}),
+            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_HEX}),
             ?assertEqual(Version, ?VERSION),
             {ok, callback_state} 
         end),
@@ -144,9 +145,9 @@ main_terminate() ->
     meck:expect(of_driver_handler_mock, handle_connect,
         fun(_IpAddr, DatapathId, Features, Version, _Connection, AuxId, _Opt) ->
             ?assertMatch(#ofp_features_reply{ 
-                            datapath_mac = ?DATAPATH_MAC,
+                            datapath_mac = ?DATAPATH_UNPARSED,
                             datapath_id = ExpectedDatapathId}, Features),
-            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_MAC}),
+            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_HEX}),
             ?assertEqual(Version, ?VERSION),
             ?assertEqual(AuxId, ExpectedAuxId),
             {ok, aux_callback_state} 
@@ -158,13 +159,13 @@ main_terminate() ->
     ?assert(meck:validate(of_driver_handler_mock)).
 
 early_message() ->
-    ExpectedDatapathId = 1,
+    ExpectedDatapathId = ?DATAPATH_ID,
     meck:expect(of_driver_handler_mock, init,
         fun(_IpAddr, DatapathId, Features, Version, _Connection, _Opt) ->
             ?assertMatch(#ofp_features_reply{ 
-                            datapath_mac = ?DATAPATH_MAC,
+                            datapath_mac = ?DATAPATH_UNPARSED,
                             datapath_id = ExpectedDatapathId}, Features),
-            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_MAC}),
+            ?assertEqual(DatapathId, {ExpectedDatapathId, ?DATAPATH_HEX}),
             ?assertEqual(Version, ?VERSION),
             {ok, callback_state} 
         end),
@@ -181,7 +182,7 @@ early_message() ->
     ?assert(meck:validate(of_driver_handler_mock)).
 
 close_connection() ->
-    ExpectedDatapathId = 1,
+    ExpectedDatapathId = ?DATAPATH_ID,
     Me = self(),
     meck:expect(of_driver_handler_mock, init,
         fun(_IpAddr, _DatapathId, _Features, _Version, Connection, _Opt) ->
@@ -211,16 +212,19 @@ aux_connect({_Socket, _ConnTable}) ->
     ExpectedAuxId = 1,
     meck:expect(of_driver_handler_mock, handle_connect,
         fun(_IpAddr, DatapathId, Features, Version, _Connection, AuxId, _Opt) ->
+            % ?assertMatch(#ofp_features_reply{ 
+            %                 datapath_mac = ?DATAPATH_UNPARSED,
+            %                 datapath_id = ?DATAPATH_ID }, Features),
             ?assertMatch(#ofp_features_reply{ 
-                            datapath_mac = ?DATAPATH_MAC,
-                            datapath_id = ?DATAPATH_ID}, Features),
-            ?assertEqual(DatapathId, {?DATAPATH_ID, ?DATAPATH_MAC}),
+                            datapath_mac = ?DATAPATH_UNPARSED,
+                            datapath_id = ?DATAPATH_ID }, Features),
+            ?assertEqual(DatapathId, {?DATAPATH_ID, ?DATAPATH_HEX}),
             ?assertEqual(Version, ?VERSION),
             ?assertEqual(AuxId, ExpectedAuxId),
             {ok, aux_callback_state} 
         end),
     meck:expect(of_driver_handler_mock, handle_disconnect, fun(_Reason, aux_callback_state) -> ok end),
-    AuxSocket = connect_aux(ExpectedAuxId),
+    AuxSocket = connect_aux(?DATAPATH_ID,ExpectedAuxId),
     gen_tcp:close(AuxSocket),
     ?assertNot(meck:called(of_driver_handler_mock, terminate, '_')),
     ?assert(meck:validate(of_driver_handler_mock)).
@@ -483,6 +487,9 @@ send_msg(Socket, Msg) ->
 connect_aux(AuxId) ->
     connect(0, AuxId).
 
+connect_aux(DatapathID,AuxId) ->
+    connect(DatapathID,AuxId).
+
 connect() ->
     connect(0, 0).
 
@@ -537,7 +544,7 @@ features_reply(XID, DatapathId, AuxId) ->
         type = features_reply,
         xid = XID,
         body = #ofp_features_reply{
-            datapath_mac = ?DATAPATH_MAC,
+            datapath_mac = ?DATAPATH_UNPARSED,
             datapath_id = DatapathId,
             n_buffers = 0,
             n_tables = 255,

@@ -335,8 +335,10 @@ handle_message(#ofp_message{version = Version,
             State#?STATE{aux_id = 0, datapath_info = DatapathInfo};
         _ ->
         	{_MsgName, _MsgXid, MsgRes} = of_msg_lib:decode(Msg),
-        	DatapathInfo = {proplists:get_value(datapath_id,  MsgRes),
-        					proplists:get_value(datapath_mac, MsgRes)},
+          DPID=proplists:get_value(datapath_id,  MsgRes),
+          PDMAC=proplists:get_value(datapath_mac, MsgRes),
+          DPHEX=of_driver_utils:datapath_mac(DPID,PDMAC),
+        	DatapathInfo = {DPID,DPHEX},
         	AuxID = proplists:get_value(auxiliary_id, MsgRes),
             State#?STATE{aux_id = AuxID, datapath_info = DatapathInfo}
     end,    
@@ -356,7 +358,7 @@ handle_message(#ofp_message{version = Version,
                     MonitorRef = erlang:monitor(process, MainPid),
                     NewState3 = NewState2#?STATE{main_monitor = MonitorRef},
                     do_callback(SwitchHandler, handle_connect,
-                                        [IpAddr, NewState1#?STATE.datapath_info,
+                                        [IpAddr, NewState3#?STATE.datapath_info,
                                          Features, Version, self(),
                                          NewState2#?STATE.aux_id, Opts],
                                         NewState3)

@@ -33,7 +33,8 @@
         ]).
 -export([conf_default/2,
          conf_default/3,
-         proplist_default/3
+         proplist_default/3,
+         datapath_mac/2
         ]).
 
 -spec connection_info(ConnectionPid :: pid()) -> {ok,record()} | undefined.
@@ -107,5 +108,31 @@ close(tcp, Socket) ->
     gen_tcp:close(Socket);
 close(tls, Socket) ->
     ssl:close(Socket).
+
+datapath_mac(DatapathID,DatapathMac) ->
+    gen_datapath_id(DatapathID,DatapathMac).
+
+get_datapath_mac(DatapathMac) ->
+    to_hex(DatapathMac,[]).
+
+to_hex(<<>>, Hex) ->
+    lists:flatten(lists:reverse(Hex));
+to_hex(<<B1:4, B2:4, Binary/binary>>, Hex) ->
+    I1 = integer_to_list(B1, 16),
+    I2 = integer_to_list(B2, 16),
+    to_hex(Binary, [":", I2, I1 | Hex]).
+
+gen_datapath_id(SwitchId,DatapathMac) when SwitchId < 10 ->
+    get_datapath_mac(DatapathMac) ++ "00:0" ++ integer_to_list(SwitchId);
+gen_datapath_id(SwitchId,DatapathMac) when SwitchId < 100 ->
+    get_datapath_mac(DatapathMac) ++ "00:" ++ integer_to_list(SwitchId);
+gen_datapath_id(SwitchId,DatapathMac) when SwitchId < 1000 ->
+    get_datapath_mac(DatapathMac) ++ "0" ++ integer_to_list(SwitchId div 100) ++
+        ":" ++ integer_to_list(SwitchId rem 100);
+gen_datapath_id(SwitchId,DatapathMac) when SwitchId < 10000 ->
+    get_datapath_mac(DatapathMac) ++ integer_to_list(SwitchId div 100) ++
+        ":" ++ integer_to_list(SwitchId rem 100).
+
+
 
 %%----------------------------------------------------------------------------
