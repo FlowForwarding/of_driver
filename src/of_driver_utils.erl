@@ -110,7 +110,7 @@ close(tls, Socket) ->
     ssl:close(Socket).
 
 datapath_mac(SwitchId,MAC) ->
-    string:join([integer_to_hex(D) || <<D>> <= <<MAC/binary,SwitchId:16>>],":").
+    string:join([integer_to_hex(D) || <<D>> <= <<SwitchId:16,MAC/binary>>],":").
 
 integer_to_hex(I) ->
     case integer_to_list(I, 16) of
