@@ -293,7 +293,7 @@ do_handle_tcp(#?STATE{parser        = undefined,
             handle_failed_negotiation(XID, unsupported_version_or_bad_message,
                                       State)
     end;
-do_handle_tcp(#?STATE{ parser = Parser} = State, Data) ->
+do_handle_tcp(#?STATE{ parser = Parser, version = Version } = State, Data) ->
     case ofp_parser:parse(Parser, Data) of
         {ok, NewParser, Messages} ->
             case handle_messages(Messages, State) of
@@ -304,6 +304,11 @@ do_handle_tcp(#?STATE{ parser = Parser} = State, Data) ->
                 {stop, Reason, NewState} ->
                     {stop, Reason, NewState}
             end;
+        {error,Exception} ->
+            {ok, EmptyParser} = ofp_parser:new(Version),
+            State#?STATE{
+                    parser = EmptyParser,
+                    last_receive = now()};
         _Else ->
             close_of_connection(State,parse_error)
     end.  
