@@ -47,6 +47,8 @@ of_driver_test_() ->
                 [{"gen_xid",                       fun gen_xid/1}
                 ,{"aux_connect",                   fun aux_connect/1}
                 ,{"in_message",                    fun in_message/1}
+                ,{"echo_request",                  fun echo_request/1}
+                ,{"echo_request with data",        fun echo_request2/1}
                 ,{"send",                          fun send/1}
                 ,{"sync_send",                     fun sync_send/1}
                 ,{"sync_send_no_reply",            fun sync_send_no_reply/1}
@@ -234,6 +236,20 @@ in_message({Socket, _ConnTable}) ->
                     fun(#ofp_message{type = packet_in}, State) -> {ok, State} end),
     send_msg(Socket, packet_in()),
     ?assert(meck:validate(of_driver_handler_mock)).
+
+echo_request({Socket, _ConnTable}) ->
+    Xid = 1234,
+    Data = <<>>,
+    send_msg(Socket, echo_request(Xid, Data)),
+    {#ofp_message{type = echo_reply, xid = Xid, body = Body}, <<>>} = receive_msg(Socket, <<>>),
+    ?assertMatch(#ofp_echo_reply{data = Data}, Body).
+
+echo_request2({Socket, _ConnTable}) ->
+    Xid = 1234,
+    Data = <<"somedata">>,
+    send_msg(Socket, echo_request(Xid, Data)),
+    {#ofp_message{type = echo_reply, xid = Xid, body = Body}, <<>>} = receive_msg(Socket, <<>>),
+    ?assertMatch(#ofp_echo_reply{data = Data}, Body).
 
 send({Socket, ConnTable}) ->
     Hello = create_hello(4),
@@ -550,6 +566,16 @@ features_reply(XID, DatapathId, AuxId) ->
             n_tables = 255,
             auxiliary_id = AuxId,
             capabilities = [flow_stats,table_stats,port_stats,group_stats,queue_stats]
+        }
+    }.
+
+echo_request(XID, Data) ->
+    #ofp_message{
+        version = ?VERSION,
+        type = echo_request,
+        xid = XID,
+        body = #ofp_echo_request{
+            data = Data
         }
     }.
 

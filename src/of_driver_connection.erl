@@ -335,9 +335,9 @@ handle_message(#ofp_message{version = Version,
             State#?STATE{aux_id = 0, datapath_mac = DatapathMac};
         _ ->
         	{_MsgName, _MsgXid, MsgRes} = of_msg_lib:decode(Msg),
-          DPID=proplists:get_value(datapath_id,  MsgRes),
-          PDMAC=proplists:get_value(datapath_mac, MsgRes),
-          DatapathMac=of_driver_utils:datapath_mac(DPID,PDMAC),
+          DPID = proplists:get_value(datapath_id,  MsgRes),
+          PDMAC = proplists:get_value(datapath_mac, MsgRes),
+          DatapathMac = of_driver_utils:datapath_mac(DPID,PDMAC),
         	AuxID = proplists:get_value(auxiliary_id, MsgRes),
             State#?STATE{aux_id = AuxID, datapath_mac = DatapathMac}
     end,    
@@ -390,6 +390,17 @@ handle_message(#ofp_message{xid = XID, type = barrier_reply} = Msg,
 handle_message(#ofp_message{xid = XID, type = echo_reply},
                                         #?STATE{ping_xid = XID} = State) ->
     receive_ping(State);
+handle_message(#ofp_message{xid = XID, type = echo_request} = Msg,
+                        State = #?STATE{version = Version,
+                                        protocol = Proto,
+                                        socket = Socket}) ->
+    % intercept and respond to echo request
+    {echo_request, _XID, EchoBody} = of_msg_lib:decode(Msg),
+    Data = proplists:get_value(data, EchoBody),
+    {ok, EchoReply} = of_protocol:encode(
+                            of_msg_lib:echo_reply(Version, XID, Data)),
+    ok = of_driver_utils:send(Proto, Socket, EchoReply),
+    State;
 handle_message(#ofp_message{xid = XID} = Msg, State) ->
     update_response(XID, Msg, State).
     
