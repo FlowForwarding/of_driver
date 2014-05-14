@@ -19,7 +19,10 @@
 
 %%% @doc 
 %%% of_driver manages the network connection between an OpenFlow
-%%% controller and an OpenFlow switch.
+%%% controller and an OpenFlow switch.  of_driver automatically responds
+%%% echo_request messages from the switch with an echo_reply with the
+%%% same XID and Data.  of_driver may also be configured to automatically
+%%% send echo_request messages to the switch (see 'enable_ping').
 %%% 
 %%% === Application Environment Variables ===
 %%% `listen' - if `true', automatically start listening for incoming
