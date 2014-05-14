@@ -26,7 +26,7 @@
 -define(LISTEN_PORT, 15578).
 -define(DATAPATH_ID, 1).
 -define(DATAPATH_UNPARSED,<<8,0,39,150,212,121>>).
--define(DATAPATH_HEX,"08:00:27:96:D4:79:00:01").
+-define(DATAPATH_HEX,"00:01:08:00:27:96:D4:79").
 
 -export([trace/0]).
 
