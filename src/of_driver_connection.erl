@@ -554,7 +554,9 @@ send_incompatible_version_error(XID, Socket, Proto, OFVersion) ->
 create_error(3, Type, Code) ->
     ofp_client_v3:create_error(Type, Code);
 create_error(4, Type, Code) ->
-    ofp_client_v4:create_error(Type, Code).
+    ofp_client_v4:create_error(Type, Code);
+create_error(5, Type, Code) ->
+    ofp_client_v5:create_error(Type, Code).
 
 terminate_connection(Socket) ->
     of_driver_utils:close(tcp, Socket).
