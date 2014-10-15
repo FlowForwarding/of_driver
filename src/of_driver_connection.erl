@@ -304,7 +304,8 @@ do_handle_tcp(#?STATE{ parser = Parser, version = Version } = State, Data) ->
                 {stop, Reason, NewState} ->
                     {stop, Reason, NewState}
             end;
-        {error,Exception} ->
+        {error,_Exception} ->
+            ?WARNING("ofp_parser parsing tcp Data failed.\n",[]),
             {ok, EmptyParser} = ofp_parser:new(Version),
             State#?STATE{
                     parser = EmptyParser,
