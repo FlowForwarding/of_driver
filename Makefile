@@ -5,7 +5,7 @@ compile: rebar
 	@./rebar compile
 
 test: rebar
-	@./rebar eunit
+	@./rebar skip_deps=true eunit
 
 clean: rebar
 	@./rebar clean
