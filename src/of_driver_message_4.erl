@@ -41,5 +41,9 @@ append_body(#ofp_message{ body = #ofp_meter_config_reply{ body = InnerBody1 } } 
             #ofp_message{ body = #ofp_meter_config_reply{ body = InnerBody2 } } = _Msg2) ->
     Msg1#ofp_message{ body = #ofp_meter_config_reply{ body = lists:flatten([InnerBody1|InnerBody2]) } };
 
+append_body(#ofp_message{ body = #ofp_table_features_reply{ body = InnerBody1 } } = Msg1,
+            #ofp_message{ body = #ofp_table_features_reply{ body = InnerBody2 } } = _Msg2) ->
+    Msg1#ofp_message{ body = #ofp_table_features_reply{ body = lists:flatten([InnerBody1|InnerBody2]) } };
+
 append_body(_,_) -> %% Non matching...
     false.
