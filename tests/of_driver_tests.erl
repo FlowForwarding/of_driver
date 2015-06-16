@@ -75,10 +75,7 @@ setup() ->
                                 [{callback_module, of_driver_handler_mock},
                                  {listen_port, ?LISTEN_PORT},
                                  {init_opt, ConnTable}]],
-    ok = application:start(eenum),
-    ok = application:start(of_protocol),
-    ok = application:start(lager),
-    ok = application:start(of_driver),
+    {ok, _} = application:ensure_all_started(of_driver),
     Socket = connect(),
     {Socket, ConnTable}.
 
@@ -497,7 +494,7 @@ receive_msg(_Socket, MsgBin) ->
 
 send_msg(Socket, Msg) ->
 %   ?debugFmt("~n~nsend message: ~p~n", [Msg]),
-    {ok, Bin} = of_protocol:encode(Msg),
+    {{ok, Bin}, Msg} = {of_protocol:encode(Msg), Msg},
     ok = gen_tcp:send(Socket, Bin).
 
 connect_aux(AuxId) ->
@@ -584,6 +581,7 @@ packet_in() ->
         version = ?VERSION, 
         type = packet_in,
         body = #ofp_packet_in{
+            total_len = 5,
             buffer_id = no_buffer,
             reason = action,
             table_id = 1,
