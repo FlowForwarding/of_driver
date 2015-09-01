@@ -466,7 +466,7 @@ close_of_connection(#?STATE{socket = Socket} = State, failed_version_negotiation
     %% When the switch and the controller fail at negotiating the OF version
     %% to use, there is no need to call the handler's terminate/2 callback
     %% function since the handler's init/6 has not been called either.
-    ?WARNING("connection terminated: version negotation failed~n"),
+    ?WARNING("connection terminated: version negotiation failed"),
     ok = terminate_connection(Socket),
     {stop, normal, State#?STATE{socket = undefined}};
 close_of_connection(#?STATE{socket        = Socket,
