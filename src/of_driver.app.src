@@ -24,6 +24,7 @@
                   stdlib,
                   mnesia,
                   of_protocol,
+                  of_msg_lib,
                   lager
                  ]},
   {env, []},
