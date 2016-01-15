@@ -37,7 +37,7 @@
          datapath_mac/2
         ]).
 
--spec connection_info(ConnectionPid :: pid()) -> {ok,record()} | undefined.
+-spec connection_info(ConnectionPid :: pid()) -> {ok,tuple()} | undefined.
 % @doc
 connection_info(ConnectionPid) ->
     try
